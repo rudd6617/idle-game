@@ -42,8 +42,12 @@ export function createInitialState(): GameState {
       },
     ],
     resources: { money: 0, crops: {} },
+    upgrades: { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0 },
+    orders: [],
+    orderRefreshTimer: 0,
     nextCropId: 1,
     nextWorkerId: 2,
+    nextOrderId: 1,
     lastSaveTime: Date.now(),
   };
 }

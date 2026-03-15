@@ -1,26 +1,39 @@
 import type { Crop, CropType, GameState } from '../entities/types';
 import { CROP_DEFS } from '../entities/cropDefs';
+import { getUpgradeMultiplier } from './UpgradeSystem';
 
 export function updateCrops(state: GameState, dt: number): void {
+  const growthMult = getUpgradeMultiplier(state, 'growthSpeed');
+  const maintMult = getUpgradeMultiplier(state, 'maintenanceInterval');
+  const autoHarvest = state.upgrades.autoHarvest > 0;
+
+  // Auto-harvest ready crops
+  if (autoHarvest) {
+    for (let i = state.crops.length - 1; i >= 0; i--) {
+      const crop = state.crops[i]!;
+      if (crop.stage === 'ready') harvestCrop(state, crop);
+    }
+  }
+
   for (const crop of state.crops) {
     if (crop.stage === 'ready') continue;
 
     // Growth pauses if needs water or weeding
     if (!crop.needsWater && !crop.needsWeeding) {
-      crop.growthTimer -= dt;
+      crop.growthTimer -= dt * growthMult;
       if (crop.growthTimer <= 0) {
         advanceStage(crop);
       }
     }
 
-    // Water timer
-    crop.waterTimer -= dt;
+    // Water timer (higher maintMult = slower decay = longer intervals)
+    crop.waterTimer -= dt / maintMult;
     if (crop.waterTimer <= 0) {
       crop.needsWater = true;
     }
 
     // Weed timer
-    crop.weedTimer -= dt;
+    crop.weedTimer -= dt / maintMult;
     if (crop.weedTimer <= 0) {
       crop.needsWeeding = true;
     }

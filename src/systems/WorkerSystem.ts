@@ -2,15 +2,17 @@ import type { GameState, Task, Worker, Crop } from '../entities/types';
 import { WORKER_SPEED, WORK_DURATION, TILE_SIZE } from '../entities/constants';
 import { CROP_DEFS } from '../entities/cropDefs';
 import { plantCrop, harvestCrop } from './CropSystem';
+import { getUpgradeMultiplier } from './UpgradeSystem';
 
 export function updateWorkers(state: GameState, dt: number): void {
+  const speedMult = getUpgradeMultiplier(state, 'workerSpeed');
   for (const worker of state.workers) {
     switch (worker.state) {
       case 'idle':
         findTask(state, worker);
         break;
       case 'moving':
-        moveToTarget(worker, dt);
+        moveToTarget(worker, dt, speedMult);
         break;
       case 'working':
         doWork(state, worker, dt);
@@ -76,7 +78,7 @@ function findPlantTask(state: GameState, claimed: Set<string>): Task | null {
   return null;
 }
 
-function moveToTarget(worker: Worker, dt: number): void {
+function moveToTarget(worker: Worker, dt: number, speedMult: number): void {
   const task = worker.currentTask;
   if (!task) {
     worker.state = 'idle';
@@ -97,7 +99,7 @@ function moveToTarget(worker: Worker, dt: number): void {
     return;
   }
 
-  const step = WORKER_SPEED * (dt / 1000);
+  const step = WORKER_SPEED * speedMult * (dt / 1000);
   worker.x += (dx / dist) * Math.min(step, dist);
   worker.y += (dy / dist) * Math.min(step, dist);
 }

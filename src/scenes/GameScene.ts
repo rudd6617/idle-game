@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import type { CropType, GameState } from '../entities/types';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, SAVE_INTERVAL, CLEAR_COST, WORKER_CRAFT_COST } from '../entities/constants';
+import type { CropType, GameState, UpgradeType } from '../entities/types';
+import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, SAVE_INTERVAL, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS } from '../entities/constants';
 import { CROP_TYPES, CROP_DEFS } from '../entities/cropDefs';
 import { createInitialState } from '../systems/StateFactory';
 import { loadGame, saveGame, getOfflineTime } from '../systems/SaveSystem';
@@ -8,19 +8,20 @@ import { updateCrops } from '../systems/CropSystem';
 import { updateWorkers } from '../systems/WorkerSystem';
 import { sellCrop } from '../systems/EconomySystem';
 import { canCraftWorker, craftWorker } from '../systems/CraftSystem';
+import { canUpgrade, applyUpgrade, getUpgradeCost, getUpgradeMultiplier } from '../systems/UpgradeSystem';
+import { updateOrders, canFulfillOrder, fulfillOrder } from '../systems/OrderSystem';
 import { generateAllSprites, getCropTextureKey, getTileTextureKey } from '../sprites/SpriteGenerator';
-
-const CROP_COLORS: Record<CropType, number> = {
-  carrot: 0xffa500,
-  wheat: 0xf5deb3,
-  tomato: 0xff6347,
-};
 
 // Cycle order: carrot → wheat → tomato → null → carrot
 const CROP_CYCLE: (CropType | null)[] = ['carrot', 'wheat', 'tomato', null];
 
 const GAME_W = MAP_WIDTH * TILE_SIZE;
-const UI_Y = MAP_HEIGHT * TILE_SIZE;
+const SIDEBAR_X = GAME_W + 12;
+const SIDEBAR_W = 196;
+
+const FONT_SM = { fontSize: '11px', color: '#999999', fontFamily: 'monospace' } as const;
+const FONT_MD = { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' } as const;
+const FONT_HEADER = { fontSize: '12px', color: '#facc15', fontFamily: 'monospace', fontStyle: 'bold' } as const;
 
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
@@ -32,12 +33,15 @@ export class GameScene extends Phaser.Scene {
   private cropWaterIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private cropWeedIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private workerImages: Phaser.GameObjects.Image[] = [];
-  private indicatorGraphics!: Phaser.GameObjects.Graphics;
+  private indicatorImages: Map<string, Phaser.GameObjects.Image> = new Map();
 
-  // UI
-  private hudText!: Phaser.GameObjects.Text;
-  private sellTexts: Phaser.GameObjects.Text[] = [];
+  // Sidebar UI
+  private statusText!: Phaser.GameObjects.Text;
   private craftText!: Phaser.GameObjects.Text;
+  private sellTexts: Phaser.GameObjects.Text[] = [];
+  private orderTexts: Phaser.GameObjects.Text[] = [];
+  private orderClaimTexts: Phaser.GameObjects.Text[] = [];
+  private upgradeTexts: Phaser.GameObjects.Text[] = [];
 
   constructor() {
     super('GameScene');
@@ -52,10 +56,9 @@ export class GameScene extends Phaser.Scene {
       if (offlineMs > 0) this.simulateOffline(offlineMs);
     }
 
-    // Generate all pixel art textures
     generateAllSprites(this);
 
-    // Create tile image grid
+    // Tile grid
     for (let y = 0; y < MAP_HEIGHT; y++) {
       const row: Phaser.GameObjects.Image[] = [];
       for (let x = 0; x < MAP_WIDTH; x++) {
@@ -71,55 +74,68 @@ export class GameScene extends Phaser.Scene {
       this.tileImages.push(row);
     }
 
-    // Indicator overlay (assigned crop dots + fallow X) — drawn on top of tiles and crops
-    this.indicatorGraphics = this.add.graphics();
-    this.indicatorGraphics.setDepth(10);
+    // Sidebar divider line
+    const divider = this.add.graphics();
+    divider.lineStyle(1, 0x333333, 1);
+    divider.lineBetween(GAME_W, 0, GAME_W, MAP_HEIGHT * TILE_SIZE);
 
-    // --- UI Panel ---
-    this.hudText = this.add.text(8, UI_Y + 8, '', {
-      fontSize: '14px', color: '#ffffff', fontFamily: 'monospace',
-    });
+    // === SIDEBAR ===
+    let y = 8;
 
-    // Sell buttons
-    const row2Y = UI_Y + 32;
-    const colW = Math.floor(GAME_W / 3);
-    CROP_TYPES.forEach((type, i) => {
-      const x = 8 + i * colW;
-      const sellText = this.add.text(x, row2Y, '', {
-        fontSize: '12px', color: '#ffffff', fontFamily: 'monospace',
-      }).setInteractive({ useHandCursor: true });
-      sellText.on('pointerdown', () => {
-        sellCrop(this.state, type);
-      });
+    // --- FARM STATUS ---
+    this.add.text(SIDEBAR_X, y, 'FARM STATUS', FONT_HEADER);
+    y += 22;
+    this.statusText = this.add.text(SIDEBAR_X, y, '', FONT_MD);
+    y += 22;
+    this.craftText = this.add.text(SIDEBAR_X, y, '', FONT_MD)
+      .setInteractive({ useHandCursor: true });
+    this.craftText.on('pointerdown', () => { craftWorker(this.state); });
+    y += 28;
+
+    // --- INVENTORY ---
+    this.add.text(SIDEBAR_X, y, 'INVENTORY', FONT_HEADER);
+    y += 22;
+    CROP_TYPES.forEach((type) => {
+      this.add.image(SIDEBAR_X + 6, y + 6, `icon_${type}`);
+      const sellText = this.add.text(SIDEBAR_X + 18, y, '', FONT_MD)
+        .setInteractive({ useHandCursor: true });
+      sellText.on('pointerdown', () => { sellCrop(this.state, type); });
       this.sellTexts.push(sellText);
+      y += 22;
     });
+    y += 10;
 
-    // Color legend
-    const legendY = UI_Y + 56;
-    const legendG = this.add.graphics();
-    const legendItems = [
-      { color: 0xffa500, label: 'Carrot' },
-      { color: 0xf5deb3, label: 'Wheat' },
-      { color: 0xff6347, label: 'Tomato' },
-    ];
-    legendItems.forEach((item, i) => {
-      const lx = 8 + i * 80;
-      legendG.fillStyle(item.color, 1);
-      legendG.fillRect(lx, legendY + 2, 8, 8);
-      this.add.text(lx + 12, legendY, item.label, {
-        fontSize: '10px', color: '#999999', fontFamily: 'monospace',
+    // --- ORDERS ---
+    this.add.text(SIDEBAR_X, y, 'ORDERS', FONT_HEADER);
+    y += 22;
+    for (let i = 0; i < MAX_ORDERS; i++) {
+      const orderText = this.add.text(SIDEBAR_X, y, '', {
+        ...FONT_SM,
+        wordWrap: { width: SIDEBAR_W },
       });
-    });
-    this.add.text(8 + 3 * 80, legendY, '(click soil)', {
-      fontSize: '10px', color: '#666666', fontFamily: 'monospace',
-    });
+      this.orderTexts.push(orderText);
+      y += 30;
+      const claimText = this.add.text(SIDEBAR_X, y, '', FONT_MD)
+        .setInteractive({ useHandCursor: true });
+      claimText.on('pointerdown', () => {
+        const order = this.state.orders[i];
+        if (order) fulfillOrder(this.state, order);
+      });
+      this.orderClaimTexts.push(claimText);
+      y += 24;
+    }
+    y += 6;
 
-    // Craft worker button
-    this.craftText = this.add.text(GAME_W - 120, UI_Y + 8, '', {
-      fontSize: '13px', color: '#ffffff', fontFamily: 'monospace',
-    }).setInteractive({ useHandCursor: true });
-    this.craftText.on('pointerdown', () => {
-      craftWorker(this.state);
+    // --- UPGRADES ---
+    this.add.text(SIDEBAR_X, y, 'UPGRADES', FONT_HEADER);
+    y += 22;
+    const upgradeTypes: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest'];
+    upgradeTypes.forEach((type) => {
+      const text = this.add.text(SIDEBAR_X, y, '', FONT_MD)
+        .setInteractive({ useHandCursor: true });
+      text.on('pointerdown', () => { applyUpgrade(this.state, type); });
+      this.upgradeTexts.push(text);
+      y += 22;
     });
 
     // Tile click
@@ -144,6 +160,7 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     updateCrops(this.state, delta);
     updateWorkers(this.state, delta);
+    updateOrders(this.state, delta);
 
     this.saveTimer += delta;
     if (this.saveTimer >= SAVE_INTERVAL) {
@@ -158,28 +175,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleTileClick(pointer: Phaser.Input.Pointer): void {
-    if (pointer.y >= UI_Y) return;
+    if (pointer.x >= GAME_W) return;
 
     const tx = Math.floor(pointer.x / TILE_SIZE);
     const ty = Math.floor(pointer.y / TILE_SIZE);
     const tile = this.state.tiles[ty]?.[tx];
     if (!tile) return;
 
-    // Soil tile: cycle assigned crop
     if (tile.type === 'soil') {
-      if (tile.cropId !== null) {
-        tile.assignedCrop = null;
-      } else {
-        const idx = CROP_CYCLE.indexOf(tile.assignedCrop);
-        tile.assignedCrop = CROP_CYCLE[(idx + 1) % CROP_CYCLE.length] ?? null;
-      }
+      const idx = CROP_CYCLE.indexOf(tile.assignedCrop);
+      tile.assignedCrop = CROP_CYCLE[(idx + 1) % CROP_CYCLE.length] ?? null;
       return;
     }
 
-    // Non-soil: expand
     const cost = CLEAR_COST[tile.type];
     if (cost === undefined) return;
-
     if (this.state.resources.money >= cost) {
       this.state.resources.money -= cost;
       tile.type = 'soil';
@@ -204,10 +214,10 @@ export class GameScene extends Phaser.Scene {
       const dt = Math.min(step, cappedMs - t);
       updateCrops(this.state, dt);
       updateWorkers(this.state, dt);
+      updateOrders(this.state, dt);
     }
   }
 
-  /** Sync crop Image objects with state.crops */
   private syncCrops(): void {
     const activeCropIds = new Set<number>();
 
@@ -215,7 +225,6 @@ export class GameScene extends Phaser.Scene {
       activeCropIds.add(crop.id);
       const textureKey = getCropTextureKey(crop.type, crop.stage);
 
-      // Crop image
       let img = this.cropImages.get(crop.id);
       if (!img) {
         img = this.add.image(0, 0, textureKey);
@@ -223,14 +232,10 @@ export class GameScene extends Phaser.Scene {
         this.cropImages.set(crop.id, img);
       }
       img.setTexture(textureKey);
-      img.setPosition(
-        crop.tileX * TILE_SIZE + TILE_SIZE / 2,
-        crop.tileY * TILE_SIZE + TILE_SIZE / 2,
-      );
+      img.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE / 2, crop.tileY * TILE_SIZE + TILE_SIZE / 2);
       img.setDisplaySize(TILE_SIZE - 4, TILE_SIZE - 4);
       img.setVisible(true);
 
-      // Water icon
       let waterIcon = this.cropWaterIcons.get(crop.id);
       if (!waterIcon) {
         waterIcon = this.add.image(0, 0, 'icon_water');
@@ -240,7 +245,6 @@ export class GameScene extends Phaser.Scene {
       waterIcon.setPosition(crop.tileX * TILE_SIZE + 10, crop.tileY * TILE_SIZE + 10);
       waterIcon.setVisible(crop.needsWater);
 
-      // Weed icon
       let weedIcon = this.cropWeedIcons.get(crop.id);
       if (!weedIcon) {
         weedIcon = this.add.image(0, 0, 'icon_weed');
@@ -251,7 +255,6 @@ export class GameScene extends Phaser.Scene {
       weedIcon.setVisible(crop.needsWeeding);
     }
 
-    // Remove images for harvested crops
     for (const [id, img] of this.cropImages) {
       if (!activeCropIds.has(id)) {
         img.destroy();
@@ -264,9 +267,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Sync worker Image objects with state.workers */
   private syncWorkers(): void {
-    // Grow pool if needed
     while (this.workerImages.length < this.state.workers.length) {
       const img = this.add.image(0, 0, 'worker_idle');
       img.setDepth(15);
@@ -282,30 +283,36 @@ export class GameScene extends Phaser.Scene {
       img.setVisible(true);
     }
 
-    // Hide excess
     for (let i = this.state.workers.length; i < this.workerImages.length; i++) {
       this.workerImages[i]!.setVisible(false);
     }
   }
 
-  /** Draw assigned crop indicators + fallow X with Graphics overlay */
   private drawIndicators(): void {
-    const g = this.indicatorGraphics;
-    g.clear();
+    const active = new Set<string>();
 
     for (const row of this.state.tiles) {
       for (const tile of row) {
         if (tile.type !== 'soil') continue;
-        const bx = tile.x * TILE_SIZE;
-        const by = tile.y * TILE_SIZE;
-        if (tile.assignedCrop) {
-          g.fillStyle(CROP_COLORS[tile.assignedCrop], 1);
-          g.fillRect(bx, by, 6, 6);
-        } else {
-          g.lineStyle(2, 0xff0000, 1);
-          g.lineBetween(bx + 1, by + 1, bx + 7, by + 7);
-          g.lineBetween(bx + 7, by + 1, bx + 1, by + 7);
+        const key = `${tile.x},${tile.y}`;
+        active.add(key);
+        const textureKey = tile.assignedCrop ? `icon_${tile.assignedCrop}` : 'icon_fallow';
+
+        let img = this.indicatorImages.get(key);
+        if (!img) {
+          img = this.add.image(0, 0, textureKey);
+          img.setDepth(10);
+          this.indicatorImages.set(key, img);
         }
+        img.setTexture(textureKey);
+        img.setPosition(tile.x * TILE_SIZE + 7, tile.y * TILE_SIZE + 7);
+        img.setVisible(true);
+      }
+    }
+
+    for (const [key, img] of this.indicatorImages) {
+      if (!active.has(key)) {
+        img.setVisible(false);
       }
     }
   }
@@ -315,19 +322,63 @@ export class GameScene extends Phaser.Scene {
     const workers = this.state.workers.length;
     const growing = this.state.crops.length;
 
-    this.hudText.setText(`$${money}  Workers:${workers}  Growing:${growing}`);
+    // Status
+    this.statusText.setText(`$${money}  W:${workers}  G:${growing}`);
 
-    CROP_TYPES.forEach((type, i) => {
-      const sellText = this.sellTexts[i]!;
-      const count = this.state.resources.crops[type] ?? 0;
-      const def = CROP_DEFS[type];
-
-      sellText.setText(`${type} x${count}  sell($${def.sellPrice})`);
-      sellText.setColor(count > 0 ? '#4ade80' : '#555555');
-    });
-
+    // Craft
     const canCraft = canCraftWorker(this.state);
     this.craftText.setText(`[+Worker] $${WORKER_CRAFT_COST.money}`);
     this.craftText.setColor(canCraft ? '#4ade80' : '#555555');
+
+    // Inventory
+    CROP_TYPES.forEach((type, i) => {
+      const count = this.state.resources.crops[type] ?? 0;
+      const price = CROP_DEFS[type].sellPrice;
+      this.sellTexts[i]!.setText(`${type} x${count} [$${price}]`);
+      this.sellTexts[i]!.setColor(count > 0 ? '#4ade80' : '#555555');
+    });
+
+    // Orders
+    for (let i = 0; i < MAX_ORDERS; i++) {
+      const order = this.state.orders[i];
+      if (!order) {
+        this.orderTexts[i]!.setText('---');
+        this.orderClaimTexts[i]!.setText('').disableInteractive();
+        continue;
+      }
+      const secs = Math.ceil(order.timeRemaining / 1000);
+      const mins = Math.floor(secs / 60);
+      const s = secs % 60;
+      const timeStr = `${mins}:${String(s).padStart(2, '0')}`;
+      const reqs = order.requirements.map(r => `${r.crop} x${r.amount}`).join('  ');
+      this.orderTexts[i]!.setText(`#${order.id} [${timeStr}]  ${reqs}`);
+
+      const canClaim = canFulfillOrder(this.state, order);
+      this.orderClaimTexts[i]!.setText(`[Claim $${order.reward}]`);
+      this.orderClaimTexts[i]!.setColor(canClaim ? '#4ade80' : '#555555');
+      if (canClaim) {
+        this.orderClaimTexts[i]!.setInteractive({ useHandCursor: true });
+      } else {
+        this.orderClaimTexts[i]!.disableInteractive();
+      }
+    }
+
+    // Upgrades
+    const upgradeTypes: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest'];
+    upgradeTypes.forEach((type, i) => {
+      const def = UPGRADE_DEFS[type];
+      const level = this.state.upgrades[type];
+      const maxed = level >= def.maxLevel;
+      const cost = maxed ? 0 : getUpgradeCost(type, level);
+      const can = canUpgrade(this.state, type);
+      const effect = type === 'autoHarvest'
+        ? (level > 0 ? 'ON' : 'OFF')
+        : `x${getUpgradeMultiplier(this.state, type).toFixed(1)}`;
+      const label = maxed
+        ? `${def.label} Lv${level} ${effect} MAX`
+        : `${def.label} Lv${level} ${effect} $${cost}`;
+      this.upgradeTexts[i]!.setText(label);
+      this.upgradeTexts[i]!.setColor(maxed ? '#facc15' : can ? '#4ade80' : '#555555');
+    });
   }
 }

@@ -255,6 +255,62 @@ function drawWorkerWorking(): HTMLCanvasElement {
   return c;
 }
 
+// ── mini crop icons (12×12, for UI indicators) ──────────
+
+function drawMiniCarrot(): HTMLCanvasElement {
+  const [c, ctx] = makeCanvas(12, 12);
+  const s = 2;
+  // orange body
+  px(ctx, 2, 2, 2, 3, '#ff8c00', s);
+  // green top
+  px(ctx, 2, 0, 2, 2, '#22c55e', s);
+  px(ctx, 1, 1, 1, 1, '#22c55e', s);
+  px(ctx, 4, 1, 1, 1, '#22c55e', s);
+  // tip
+  px(ctx, 2, 5, 2, 1, '#ff6600', s);
+  return c;
+}
+
+function drawMiniWheat(): HTMLCanvasElement {
+  const [c, ctx] = makeCanvas(12, 12);
+  const s = 2;
+  // stalks
+  px(ctx, 1, 2, 1, 4, '#daa520', s);
+  px(ctx, 3, 2, 1, 4, '#daa520', s);
+  px(ctx, 5, 2, 1, 4, '#daa520', s);
+  // wheat heads
+  px(ctx, 0, 0, 2, 2, '#f5deb3', s);
+  px(ctx, 2, 0, 2, 2, '#f5deb3', s);
+  px(ctx, 4, 0, 2, 2, '#f5deb3', s);
+  return c;
+}
+
+function drawMiniTomato(): HTMLCanvasElement {
+  const [c, ctx] = makeCanvas(12, 12);
+  const s = 2;
+  // red body
+  px(ctx, 1, 2, 4, 3, '#ef4444', s);
+  px(ctx, 2, 1, 2, 1, '#ef4444', s);
+  px(ctx, 2, 5, 2, 1, '#ef4444', s);
+  // green stem
+  px(ctx, 2, 0, 2, 1, '#22c55e', s);
+  // highlight
+  px(ctx, 2, 2, 1, 1, '#ff6b6b', s);
+  return c;
+}
+
+function drawMiniFallow(): HTMLCanvasElement {
+  const [c, ctx] = makeCanvas(12, 12);
+  const s = 2;
+  // red X
+  ctx.fillStyle = '#ef4444';
+  for (let i = 0; i < 6; i++) {
+    px(ctx, i, i, 1, 1, '#ef4444', s);
+    px(ctx, 5 - i, i, 1, 1, '#ef4444', s);
+  }
+  return c;
+}
+
 // ── registration ─────────────────────────────────────────
 
 export function generateAllSprites(scene: Phaser.Scene): void {
@@ -284,6 +340,12 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   // workers
   add('worker_idle', drawWorkerIdle());
   add('worker_working', drawWorkerWorking());
+
+  // mini crop icons (for indicators & UI)
+  add('icon_carrot', drawMiniCarrot());
+  add('icon_wheat', drawMiniWheat());
+  add('icon_tomato', drawMiniTomato());
+  add('icon_fallow', drawMiniFallow());
 }
 
 /** Get the texture key for a crop at a given stage */

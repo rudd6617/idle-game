@@ -1,5 +1,5 @@
 import type { GameState } from '../entities/types';
-import { WORKER_CRAFT_COST, TILE_SIZE } from '../entities/constants';
+import { WORKER_CRAFT_COST, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from '../entities/constants';
 
 export function canCraftWorker(state: GameState): boolean {
   const { money, crops } = state.resources;
@@ -16,8 +16,8 @@ export function craftWorker(state: GameState): boolean {
   // Spawn near center
   state.workers.push({
     id: state.nextWorkerId++,
-    x: 4 * TILE_SIZE + TILE_SIZE / 2,
-    y: 4 * TILE_SIZE + TILE_SIZE / 2,
+    x: Math.floor(MAP_WIDTH / 2) * TILE_SIZE + TILE_SIZE / 2,
+    y: Math.floor(MAP_HEIGHT / 2) * TILE_SIZE + TILE_SIZE / 2,
     state: 'idle',
     currentTask: null,
     workTimer: 0,

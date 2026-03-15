@@ -63,6 +63,24 @@ export interface Resources {
   crops: Partial<Record<CropType, number>>;
 }
 
+// === Upgrades ===
+
+export type UpgradeType = 'workerSpeed' | 'growthSpeed' | 'maintenanceInterval' | 'autoHarvest';
+
+// === Orders ===
+
+export interface OrderRequirement {
+  crop: CropType;
+  amount: number;
+}
+
+export interface Order {
+  id: number;
+  requirements: OrderRequirement[];
+  reward: number;
+  timeRemaining: number;  // ms
+}
+
 // === Game State ===
 
 export interface GameState {
@@ -70,7 +88,11 @@ export interface GameState {
   crops: Crop[];
   workers: Worker[];
   resources: Resources;
+  upgrades: Record<UpgradeType, number>;
+  orders: Order[];
+  orderRefreshTimer: number;  // ms until next order refill
   nextCropId: number;
   nextWorkerId: number;
+  nextOrderId: number;
   lastSaveTime: number;
 }
