@@ -1,8 +1,8 @@
 import type { GameState, Task, Worker, Crop, Facility } from '../entities/types';
-import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS } from '../entities/constants';
+import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS, BASE_CARRY_CAPACITY } from '../entities/constants';
 import { CROP_DEFS } from '../entities/cropDefs';
 import { plantCrop, removeCrop } from './CropSystem';
-import { needsFeeding, needsCollection, hasStorageSpace } from './FacilitySystem';
+import { needsFeeding, needsCollection, hasStorageSpace, getWarehouseCapacity, getCurrentStorage } from './FacilitySystem';
 import { getUpgradeMultiplier } from './UpgradeSystem';
 
 export function updateWorkers(state: GameState, dt: number): void {
@@ -33,9 +33,11 @@ function getClaimedTiles(state: GameState, self: Worker): Set<string> {
 
 function findTask(state: GameState, worker: Worker): void {
   const claimed = getClaimedTiles(state, worker);
+  const carried = getCarriedCount(worker);
+  const capacity = getCarryCapacity(state);
 
-  // Carrying item → deposit first
-  if (worker.carryingItem) {
+  // Full → must deposit
+  if (carried >= capacity) {
     const task = findDepositTask(state);
     if (task) {
       worker.currentTask = task;
@@ -44,7 +46,26 @@ function findTask(state: GameState, worker: Worker): void {
     return;
   }
 
-  // Priority: harvest > collect > water > weed > feed > plant
+  // Has items but nothing left to pick up → go deposit
+  if (carried > 0) {
+    const pickupTask = findHarvestTask(state, claimed)
+      ?? findCollectTask(state, claimed)
+      ?? findDemolishTask(state, claimed);
+    if (pickupTask) {
+      worker.currentTask = pickupTask;
+      worker.state = 'moving';
+      return;
+    }
+    // Nothing to pick up → deposit what we have
+    const depositTask = findDepositTask(state);
+    if (depositTask) {
+      worker.currentTask = depositTask;
+      worker.state = 'moving';
+    }
+    return;
+  }
+
+  // Empty hands → normal priority
   const task = findHarvestTask(state, claimed)
     ?? findCollectTask(state, claimed)
     ?? findWaterTask(state, claimed)
@@ -57,6 +78,19 @@ function findTask(state: GameState, worker: Worker): void {
 
   worker.currentTask = task;
   worker.state = 'moving';
+}
+
+function getCarriedCount(worker: Worker): number {
+  return Object.values(worker.carryingItems).reduce((s, v) => s + (v ?? 0), 0);
+}
+
+function getCarryCapacity(state: GameState): number {
+  return BASE_CARRY_CAPACITY + state.upgrades.carryCapacity * 2;
+}
+
+function addCarriedItem(worker: Worker, item: string): void {
+  const key = item as keyof typeof worker.carryingItems;
+  worker.carryingItems[key] = (worker.carryingItems[key] ?? 0) + 1;
 }
 
 function isFree(claimed: Set<string>, x: number, y: number): boolean {
@@ -202,16 +236,26 @@ function executeTask(state: GameState, worker: Worker, task: Task): void {
     case 'harvest': {
       const crop = findCropAt(state, task.targetX, task.targetY);
       if (crop) {
-        worker.carryingItem = crop.type;
+        addCarriedItem(worker, crop.type);
         removeCrop(state, crop);
       }
       break;
     }
     case 'deposit': {
-      if (worker.carryingItem && hasStorageSpace(state)) {
-        const item = worker.carryingItem;
-        state.resources.items[item] = (state.resources.items[item] ?? 0) + 1;
-        worker.carryingItem = null;
+      // Deposit all carried items to warehouse
+      for (const [item, count] of Object.entries(worker.carryingItems)) {
+        if ((count ?? 0) <= 0) continue;
+        const key = item as keyof typeof state.resources.items;
+        const toDeposit = Math.min(count!, getWarehouseCapacity(state) - getCurrentStorage(state));
+        if (toDeposit <= 0) break;
+        state.resources.items[key] = (state.resources.items[key] ?? 0) + toDeposit;
+        worker.carryingItems[key as keyof typeof worker.carryingItems] = (count ?? 0) - toDeposit;
+      }
+      // Clean up zero entries
+      for (const key of Object.keys(worker.carryingItems)) {
+        if ((worker.carryingItems[key as keyof typeof worker.carryingItems] ?? 0) <= 0) {
+          delete worker.carryingItems[key as keyof typeof worker.carryingItems];
+        }
       }
       break;
     }
@@ -221,8 +265,7 @@ function executeTask(state: GameState, worker: Worker, task: Task): void {
       const demDef = TILE_DEMOLISH_DEFS[tile.type];
       if (!demDef) break;
       tile.durability--;
-      // Give material — carry to warehouse
-      worker.carryingItem = demDef.material;
+      addCarriedItem(worker, demDef.material);
       if (tile.durability <= 0) {
         tile.type = 'grass';
         tile.markedForDemolish = false;
@@ -252,12 +295,15 @@ function executeTask(state: GameState, worker: Worker, task: Task): void {
     case 'collect': {
       const fac = findFacilityAt(state, task.targetX, task.targetY);
       if (!fac) break;
-      // Transfer output to inventory
+      const cap = getCarryCapacity(state);
       for (const [item, amount] of Object.entries(fac.outputBuffer)) {
         if ((amount ?? 0) <= 0) continue;
-        const key = item as keyof typeof state.resources.items;
-        state.resources.items[key] = (state.resources.items[key] ?? 0) + amount!;
-        fac.outputBuffer[item as keyof typeof fac.outputBuffer] = 0;
+        const space = cap - getCarriedCount(worker);
+        if (space <= 0) break;
+        const take = Math.min(amount!, space);
+        const key = item as keyof typeof worker.carryingItems;
+        worker.carryingItems[key] = (worker.carryingItems[key] ?? 0) + take;
+        fac.outputBuffer[item as keyof typeof fac.outputBuffer] = (amount ?? 0) - take;
       }
       break;
     }

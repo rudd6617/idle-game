@@ -80,7 +80,7 @@ export interface Worker {
   state: WorkerState;
   currentTask: Task | null;
   workTimer: number;
-  carryingItem: ItemType | null;
+  carryingItems: Partial<Record<ItemType, number>>;
 }
 
 // === Resources ===
@@ -92,7 +92,7 @@ export interface Resources {
 
 // === Upgrades ===
 
-export type UpgradeType = 'workerSpeed' | 'growthSpeed' | 'maintenanceInterval' | 'autoHarvest' | 'demolishSpeed';
+export type UpgradeType = 'workerSpeed' | 'growthSpeed' | 'maintenanceInterval' | 'autoHarvest' | 'demolishSpeed' | 'carryCapacity';
 
 // === Orders ===
 

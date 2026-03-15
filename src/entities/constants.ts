@@ -5,6 +5,7 @@ export const BLOCK_SIZE = 10;
 export const MAP_WIDTH = 20;   // 2 blocks wide
 export const MAP_HEIGHT = 20;  // 2 blocks tall
 export const BLOCK_COST = 500;
+export const BASE_CARRY_CAPACITY = 5;
 
 export const WORKER_SPEED = 80;
 export const WORK_DURATION = 1_200;
@@ -171,5 +172,13 @@ export const UPGRADE_DEFS: Record<UpgradeType, UpgradeDef> = {
     costMultiplier: 1.8,
     maxLevel: 10,
     effectPerLevel: 0.2,
+  },
+  carryCapacity: {
+    label: 'Carry',
+    description: '+2 carry capacity',
+    baseCost: 20,
+    costMultiplier: 1.8,
+    maxLevel: 10,
+    effectPerLevel: 2,
   },
 };

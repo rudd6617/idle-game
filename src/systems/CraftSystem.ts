@@ -21,7 +21,7 @@ export function craftWorker(state: GameState): boolean {
     state: 'idle',
     currentTask: null,
     workTimer: 0,
-    carryingItem: null,
+    carryingItems: {},
   });
 
   return true;

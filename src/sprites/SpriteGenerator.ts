@@ -718,6 +718,86 @@ function drawMiniWarehouse(): HTMLCanvasElement {
 }
 
 
+// ── toolbar icons (24×24) ───────────────────────────────
+
+function drawToolbarIcon(draw: (ctx: CanvasRenderingContext2D, s: number) => void): HTMLCanvasElement {
+  const [c, ctx] = makeCanvas(24, 24);
+  draw(ctx, 3);
+  return c;
+}
+
+function drawIconFarm(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 2, 5, 4, 2, '#8b6914', s); // soil
+    px(ctx, 3, 3, 2, 2, '#22c55e', s); // plant
+    px(ctx, 3, 2, 2, 1, '#16a34a', s);
+  });
+}
+
+function drawIconDemolish(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 3, 1, 2, 5, '#a0a0a0', s); // hammer head
+    px(ctx, 2, 1, 1, 2, '#888888', s);
+    px(ctx, 4, 3, 1, 4, '#8B4513', s); // handle
+  });
+}
+
+function drawIconGatherWood(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 1, 2, 1, 5, '#a0a0a0', s); // axe blade
+    px(ctx, 2, 3, 1, 1, '#a0a0a0', s);
+    px(ctx, 2, 1, 1, 6, '#8B4513', s); // handle
+    px(ctx, 4, 3, 3, 3, '#228B22', s); // tree
+    px(ctx, 5, 5, 1, 2, '#8B4513', s);
+  });
+}
+
+function drawIconGatherStone(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 1, 2, 1, 5, '#a0a0a0', s); // pickaxe
+    px(ctx, 2, 3, 1, 1, '#a0a0a0', s);
+    px(ctx, 2, 1, 1, 6, '#8B4513', s);
+    px(ctx, 4, 4, 4, 3, '#888888', s); // rock
+    px(ctx, 5, 3, 2, 1, '#999999', s);
+  });
+}
+
+function drawIconSell(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 2, 1, 4, 5, '#ffd700', s); // coin
+    px(ctx, 3, 0, 2, 1, '#ffd700', s);
+    px(ctx, 3, 6, 2, 1, '#ffd700', s);
+    px(ctx, 3, 3, 2, 1, '#daa520', s); // $ line
+  });
+}
+
+function drawIconUpgrade(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 3, 1, 2, 6, '#4ade80', s); // arrow up
+    px(ctx, 2, 2, 1, 1, '#4ade80', s);
+    px(ctx, 5, 2, 1, 1, '#4ade80', s);
+    px(ctx, 1, 3, 1, 1, '#4ade80', s);
+    px(ctx, 6, 3, 1, 1, '#4ade80', s);
+  });
+}
+
+function drawIconCrops(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 1, 4, 2, 2, '#ff8c00', s); // carrot
+    px(ctx, 1, 3, 1, 1, '#22c55e', s);
+    px(ctx, 4, 3, 2, 3, '#ef4444', s); // tomato
+    px(ctx, 4, 2, 2, 1, '#22c55e', s);
+  });
+}
+
+function drawIconOrders(): HTMLCanvasElement {
+  return drawToolbarIcon((ctx, s) => {
+    px(ctx, 1, 0, 6, 7, '#f5deb3', s); // paper
+    px(ctx, 2, 2, 4, 1, '#888888', s); // line 1
+    px(ctx, 2, 4, 3, 1, '#888888', s); // line 2
+  });
+}
+
 function drawLockIcon(): HTMLCanvasElement {
   const [c, ctx] = makeCanvas(T, T);
   const s = 4;
@@ -876,6 +956,14 @@ export function generateAllSprites(scene: Phaser.Scene): void {
 
   // UI icons
   add('icon_lock', drawLockIcon());
+  add('tb_farm', drawIconFarm());
+  add('tb_demolish', drawIconDemolish());
+  add('tb_gather_wood', drawIconGatherWood());
+  add('tb_gather_stone', drawIconGatherStone());
+  add('tb_sell', drawIconSell());
+  add('tb_upgrade', drawIconUpgrade());
+  add('tb_crops', drawIconCrops());
+  add('tb_orders', drawIconOrders());
 
   // facilities
   add('facility_warehouse', drawWarehouse());

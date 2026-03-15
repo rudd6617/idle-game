@@ -1,12 +1,12 @@
 import Phaser from 'phaser';
 import type { CropType, FacilityType, GameState, UpgradeType } from '../entities/types';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, FACILITY_TYPES, ITEM_SELL_PRICES } from '../entities/constants';
+import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, ITEM_SELL_PRICES } from '../entities/constants';
 import { CROP_TYPES, CROP_DEFS } from '../entities/cropDefs';
 import { createInitialState } from '../systems/StateFactory';
 import { loadGame, saveGame, getOfflineTime } from '../systems/SaveSystem';
 import { updateCrops } from '../systems/CropSystem';
 import { updateWorkers } from '../systems/WorkerSystem';
-import { updateFacilities, canBuildFacility, buildFacility, canBuyAnimal, buyAnimal, getWarehouseCapacity, getCurrentStorage } from '../systems/FacilitySystem';
+import { updateFacilities, canBuildFacility, buildFacility, buyAnimal, getWarehouseCapacity, getCurrentStorage } from '../systems/FacilitySystem';
 import { sellCrop, sellItem } from '../systems/EconomySystem';
 import { canCraftWorker, craftWorker } from '../systems/CraftSystem';
 import { canUpgrade, applyUpgrade, getUpgradeCost, getUpgradeMultiplier } from '../systems/UpgradeSystem';
@@ -14,16 +14,19 @@ import { updateOrders, canFulfillOrder, fulfillOrder } from '../systems/OrderSys
 import { isCropUnlocked, canUnlockCrop, unlockCrop } from '../systems/CropUnlockSystem';
 import { generateAllSprites, getCropTextureKey, getTileTextureKey } from '../sprites/SpriteGenerator';
 
+const VIEWPORT_W = BLOCK_SIZE * TILE_SIZE + TILE_SIZE;
 const MAP_PX_W = MAP_WIDTH * TILE_SIZE;
 const MAP_PX_H = MAP_HEIGHT * TILE_SIZE;
-const VIEWPORT_W = BLOCK_SIZE * TILE_SIZE + TILE_SIZE; // one block + 1 tile padding
-const SIDEBAR_W_PX = 220;
-const SIDEBAR_X = VIEWPORT_W + 12;
-const SIDEBAR_W = SIDEBAR_W_PX - 24;
+const HUD_H = 22;
+const TOOLBAR_H = 40;
+const CANVAS_H = VIEWPORT_W + HUD_H + TOOLBAR_H;
+const PANEL_H = 160;
 
 const FONT_SM = { fontSize: '11px', color: '#999999', fontFamily: 'monospace' } as const;
 const FONT_MD = { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' } as const;
-const FONT_HEADER = { fontSize: '12px', color: '#facc15', fontFamily: 'monospace', fontStyle: 'bold' } as const;
+// FONT_HEADER available if needed for panel titles
+
+type PanelType = 'sell' | 'upgrades' | 'crops' | 'orders' | null;
 
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
@@ -47,25 +50,27 @@ export class GameScene extends Phaser.Scene {
   private dragStartX = 0;
   private dragStartY = 0;
 
-  // Build / demolish / farmland / gather mode
+  // Modes
   private placingFacility: FacilityType | null = null;
   private placingFarmland = false;
   private demolishMode = false;
   private gatherMode: 'wood' | 'stone' | null = null;
-  private placementPreview: Phaser.GameObjects.Graphics | null = null;
+  private placementPreview!: Phaser.GameObjects.Graphics;
 
-  // Sidebar UI
-  private statusText!: Phaser.GameObjects.Text;
-  private craftText!: Phaser.GameObjects.Text;
+  // UI
+  private hudText!: Phaser.GameObjects.Text;
+  private modeText!: Phaser.GameObjects.Text;
+  private activePanel: PanelType = null;
+  private panelBg!: Phaser.GameObjects.Graphics;
+  private panelElements: Phaser.GameObjects.GameObject[] = [];
+  // Panel content — pre-created, toggled visibility
   private sellTexts: Phaser.GameObjects.Text[] = [];
   private itemSellTexts: Phaser.GameObjects.Text[] = [];
+  private upgradeTexts: Phaser.GameObjects.Text[] = [];
+  private cropUnlockTexts: Phaser.GameObjects.Text[] = [];
   private orderTexts: Phaser.GameObjects.Text[] = [];
   private orderClaimTexts: Phaser.GameObjects.Text[] = [];
-  private upgradeTexts: Phaser.GameObjects.Text[] = [];
-  private buildTexts: Phaser.GameObjects.Text[] = [];
-  private buildModeText!: Phaser.GameObjects.Text;
-  private cropUnlockTexts: Phaser.GameObjects.Text[] = [];
-  private inventoryBaseY = 0;
+  private toolbarButtons: Phaser.GameObjects.Image[] = [];
 
   constructor() {
     super('GameScene');
@@ -98,230 +103,209 @@ export class GameScene extends Phaser.Scene {
       this.tileImages.push(row);
     }
 
-    // Placement preview graphics
-    this.placementPreview = this.add.graphics();
-    this.placementPreview.setDepth(20);
-    this.demolishOverlay = this.add.graphics();
-    this.demolishOverlay.setDepth(9);
+    this.placementPreview = this.add.graphics().setDepth(20);
+    this.demolishOverlay = this.add.graphics().setDepth(9);
 
-    // === Camera setup ===
+    // Camera
     this.cameras.main.setBounds(0, 0, MAP_PX_W, MAP_PX_H);
-    this.cameras.main.setScroll(0, 0);
 
-    // WASD keys
     this.wasdKeys = this.input.keyboard!.addKeys('W,A,S,D') as any;
-
-    // Middle-mouse drag
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.middleButtonDown()) {
-        this.isDragging = true;
-        this.dragStartX = pointer.x;
-        this.dragStartY = pointer.y;
-      }
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.middleButtonDown()) { this.isDragging = true; this.dragStartX = p.x; this.dragStartY = p.y; }
     });
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (this.isDragging) {
-        const cam = this.cameras.main;
-        cam.scrollX -= (pointer.x - this.dragStartX);
-        cam.scrollY -= (pointer.y - this.dragStartY);
-        this.dragStartX = pointer.x;
-        this.dragStartY = pointer.y;
+        this.cameras.main.scrollX -= (p.x - this.dragStartX);
+        this.cameras.main.scrollY -= (p.y - this.dragStartY);
+        this.dragStartX = p.x; this.dragStartY = p.y;
       }
+      this.updatePlacementPreview(p);
     });
-    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.middleButtonReleased()) this.isDragging = false;
-    });
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.middleButtonReleased()) this.isDragging = false; });
 
-    // === Sidebar (fixed to screen, not camera) ===
-    // Sidebar background
-    const sidebarBg = this.add.graphics();
-    sidebarBg.fillStyle(0x1a1a2e, 1);
-    sidebarBg.fillRect(VIEWPORT_W, 0, SIDEBAR_W_PX, VIEWPORT_W);
-    sidebarBg.setScrollFactor(0).setDepth(50);
-
-    const divider = this.add.graphics();
-    divider.lineStyle(1, 0x333333, 1);
-    divider.lineBetween(VIEWPORT_W, 0, VIEWPORT_W, VIEWPORT_W);
-    divider.setScrollFactor(0).setDepth(50);
-
-    // === SIDEBAR ===
-    let y = 8;
-
-    // --- FARM STATUS ---
-    this.sidebarText(SIDEBAR_X, y, 'FARM STATUS', FONT_HEADER);
-    y += 22;
-    this.statusText = this.sidebarText(SIDEBAR_X, y, '', FONT_MD);
-    y += 22;
-    this.craftText = this.sidebarText(SIDEBAR_X, y, '', FONT_MD)
-      .setInteractive({ useHandCursor: true });
-    this.craftText.on('pointerdown', () => { craftWorker(this.state); });
-    y += 22;
-
+    // === TOP HUD ===
+    const hudBg = this.add.graphics().setScrollFactor(0).setDepth(50);
+    hudBg.fillStyle(0x111122, 0.9);
+    hudBg.fillRect(0, 0, VIEWPORT_W, HUD_H);
+    this.hudText = this.add.text(8, 4, '', { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51);
     // Reset button
-    const resetText = this.sidebarText(SIDEBAR_X, y, '[Reset Game]', { ...FONT_SM, color: '#ff4444' })
-      .setInteractive({ useHandCursor: true });
-    resetText.on('pointerdown', () => {
-      this.resetting = true;
-      localStorage.removeItem(SAVE_KEY);
-      window.location.reload();
-    });
-    y += 28;
+    const resetBtn = this.add.text(VIEWPORT_W - 60, 4, '[Reset]', { fontSize: '10px', color: '#ff4444', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51).setInteractive({ useHandCursor: true });
+    resetBtn.on('pointerdown', () => { this.resetting = true; localStorage.removeItem(SAVE_KEY); window.location.reload(); });
 
-    // --- INVENTORY (dynamic, repositioned each frame in drawUI) ---
-    this.sidebarText(SIDEBAR_X, y, 'INVENTORY', FONT_HEADER);
-    this.inventoryBaseY = y + 22;
-    CROP_TYPES.forEach((type) => {
-      const sellText = this.sidebarText(0, 0, '', FONT_MD)
-        .setInteractive({ useHandCursor: true }).setVisible(false);
-      sellText.on('pointerdown', () => { sellCrop(this.state, type); });
-      this.sellTexts.push(sellText);
-    });
-    const extraItemTypes: Array<'wood' | 'stone' | 'egg' | 'milk'> = ['wood', 'stone', 'egg', 'milk'];
-    extraItemTypes.forEach((type) => {
-      const sellText = this.sidebarText(0, 0, '', FONT_MD)
-        .setInteractive({ useHandCursor: true }).setVisible(false);
-      sellText.on('pointerdown', () => { sellItem(this.state, type); });
-      this.itemSellTexts.push(sellText);
-    });
-    y += 22 + 6 * 18 + 10;
+    // === BOTTOM TOOLBAR ===
+    const tbY = CANVAS_H - TOOLBAR_H;
+    const tbBg = this.add.graphics().setScrollFactor(0).setDepth(50);
+    tbBg.fillStyle(0x111122, 0.9);
+    tbBg.fillRect(0, tbY, VIEWPORT_W, TOOLBAR_H);
+    tbBg.lineStyle(1, 0x333333, 1);
+    tbBg.lineBetween(0, tbY, VIEWPORT_W, tbY);
 
-    // --- BUILD ---
-    this.sidebarText(SIDEBAR_X, y, 'BUILD', FONT_HEADER);
-    y += 22;
-    const farmlandText = this.sidebarText(SIDEBAR_X, y, '', FONT_MD)
-      .setInteractive({ useHandCursor: true });
-    farmlandText.on('pointerdown', () => {
-      this.clearBuildModes();
-      this.placingFarmland = !this.placingFarmland;
-    });
-    this.buildTexts.push(farmlandText);
-    y += 22;
-    FACILITY_TYPES.forEach((type) => {
-      const def = FACILITY_DEFS[type];
-      this.sidebarImage(SIDEBAR_X + 6, y + 6, `icon_${type}`);
-      const text = this.sidebarText(SIDEBAR_X + 18, y, '', FONT_MD)
+    // Mode hint text
+    this.modeText = this.add.text(VIEWPORT_W / 2, tbY - 14, '', { fontSize: '10px', color: '#facc15', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0.5);
+
+    // Tool buttons (left side)
+    const tools: Array<{ key: string; action: () => void }> = [
+      { key: 'tb_farm', action: () => { this.clearModes(); this.placingFarmland = true; } },
+      { key: 'icon_warehouse', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.warehouse.cost) this.placingFacility = 'warehouse'; } },
+      { key: 'icon_chicken_coop', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.chicken_coop.cost) this.placingFacility = 'chicken_coop'; } },
+      { key: 'icon_cow_barn', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.cow_barn.cost) this.placingFacility = 'cow_barn'; } },
+      { key: 'tb_demolish', action: () => { this.clearModes(); this.demolishMode = true; } },
+      { key: 'tb_gather_wood', action: () => { this.clearModes(); this.gatherMode = 'wood'; } },
+      { key: 'tb_gather_stone', action: () => { this.clearModes(); this.gatherMode = 'stone'; } },
+    ];
+
+    tools.forEach((t, i) => {
+      const btn = this.add.image(20 + i * 36, tbY + 20, t.key)
+        .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
         .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => {
-        this.clearBuildModes();
-        if (this.state.resources.money >= def.cost) {
-          this.placingFacility = type;
-        }
+      btn.on('pointerdown', t.action);
+      this.toolbarButtons.push(btn);
+    });
+
+    // Panel buttons (right side)
+    const panels: Array<{ key: string; panel: PanelType }> = [
+      { key: 'tb_sell', panel: 'sell' },
+      { key: 'tb_upgrade', panel: 'upgrades' },
+      { key: 'tb_crops', panel: 'crops' },
+      { key: 'tb_orders', panel: 'orders' },
+    ];
+    panels.forEach((p, i) => {
+      const btn = this.add.image(VIEWPORT_W - 20 - (panels.length - 1 - i) * 36, tbY + 20, p.key)
+        .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
+        .setInteractive({ useHandCursor: true });
+      btn.on('pointerdown', () => {
+        this.clearModes();
+        this.activePanel = this.activePanel === p.panel ? null : p.panel;
+        this.rebuildPanel();
       });
-      this.buildTexts.push(text);
-      y += 22;
+      this.toolbarButtons.push(btn);
     });
-    const demolishText = this.sidebarText(SIDEBAR_X, y, '[Demolish]', FONT_MD)
-      .setInteractive({ useHandCursor: true });
-    demolishText.on('pointerdown', () => {
-      this.clearBuildModes();
-      this.demolishMode = true;
-    });
-    this.buildTexts.push(demolishText);
-    y += 22;
-    // Gather tools
-    const gatherWoodText = this.sidebarText(SIDEBAR_X, y, '[Gather Wood]', FONT_MD)
-      .setInteractive({ useHandCursor: true });
-    gatherWoodText.on('pointerdown', () => {
-      this.clearBuildModes();
-      this.gatherMode = 'wood';
-    });
-    this.buildTexts.push(gatherWoodText);
-    y += 22;
-    const gatherStoneText = this.sidebarText(SIDEBAR_X, y, '[Gather Stone]', FONT_MD)
-      .setInteractive({ useHandCursor: true });
-    gatherStoneText.on('pointerdown', () => {
-      this.clearBuildModes();
-      this.gatherMode = 'stone';
-    });
-    this.buildTexts.push(gatherStoneText);
-    y += 22;
-    this.buildModeText = this.sidebarText(SIDEBAR_X, y, '', { ...FONT_SM, color: '#facc15' });
-    y += 22;
 
-    // --- ORDERS ---
-    this.sidebarText(SIDEBAR_X, y, 'ORDERS', FONT_HEADER);
-    y += 22;
-    for (let i = 0; i < MAX_ORDERS; i++) {
-      const orderText = this.sidebarText(SIDEBAR_X, y, '', {
-        ...FONT_SM,
-        wordWrap: { width: SIDEBAR_W },
-      });
-      this.orderTexts.push(orderText);
-      y += 30;
-      const claimText = this.sidebarText(SIDEBAR_X, y, '', FONT_MD)
-        .setInteractive({ useHandCursor: true });
-      claimText.on('pointerdown', () => {
-        const order = this.state.orders[i];
-        if (order) fulfillOrder(this.state, order);
-      });
-      this.orderClaimTexts.push(claimText);
-      y += 24;
-    }
-    y += 6;
+    // Worker button in toolbar
+    const workerBtn = this.add.text(tools.length * 36 + 16, tbY + 6, '', { fontSize: '10px', color: '#4ade80', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51).setInteractive({ useHandCursor: true });
+    workerBtn.on('pointerdown', () => { craftWorker(this.state); });
+    this.panelElements.push(workerBtn); // reuse for dynamic update
+    (this as any)._workerBtn = workerBtn;
 
-    // --- UPGRADES ---
-    this.sidebarText(SIDEBAR_X, y, 'UPGRADES', FONT_HEADER);
-    y += 22;
-    const upgradeTypes: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest', 'demolishSpeed'];
-    upgradeTypes.forEach((type) => {
-      const text = this.sidebarText(SIDEBAR_X, y, '', FONT_MD)
-        .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => { applyUpgrade(this.state, type); });
-      this.upgradeTexts.push(text);
-      y += 22;
-    });
-    y += 6;
+    // Panel background (hidden initially)
+    this.panelBg = this.add.graphics().setScrollFactor(0).setDepth(48).setVisible(false);
 
-    // --- CROPS (unlock tree) ---
-    this.sidebarText(SIDEBAR_X, y, 'CROPS', FONT_HEADER);
-    y += 22;
-    CROP_TYPES.forEach((type) => {
-      const def = CROP_DEFS[type];
-      if (def.unlockCost === 0) return;
-      const text = this.sidebarText(SIDEBAR_X, y, '', FONT_MD)
-        .setInteractive({ useHandCursor: true });
-      text.on('pointerdown', () => { unlockCrop(this.state, type); });
-      this.cropUnlockTexts.push(text);
-      y += 22;
-    });
+    // Pre-create panel content elements
+    this.createPanelElements();
 
     // Tile click
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H) return;
       this.handleTileClick(pointer);
     });
 
-    // Mouse move for placement preview
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      this.updatePlacementPreview(pointer);
-    });
-
-    // Right-click / Escape to cancel modes
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.rightButtonDown()) this.clearBuildModes();
-    });
-    this.input.keyboard?.on('keydown-ESC', () => {
-      this.clearBuildModes();
-    });
+    // Cancel modes
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.rightButtonDown()) this.clearModes(); });
+    this.input.keyboard?.on('keydown-ESC', () => { this.clearModes(); this.activePanel = null; this.rebuildPanel(); });
 
     // Background tab handler
     document.addEventListener('visibilitychange', () => {
       if (this.resetting) return;
-      if (document.hidden) {
-        this.state.lastSaveTime = Date.now();
-        saveGame(this.state);
-      } else {
-        const elapsed = Date.now() - this.state.lastSaveTime;
-        if (elapsed > 1000) {
-          this.simulateOffline(elapsed);
-        }
-      }
+      if (document.hidden) { this.state.lastSaveTime = Date.now(); saveGame(this.state); }
+      else { const e = Date.now() - this.state.lastSaveTime; if (e > 1000) this.simulateOffline(e); }
     });
+  }
+
+  private createPanelElements(): void {
+    // SELL panel
+    CROP_TYPES.forEach((type) => {
+      const t = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
+        .setInteractive({ useHandCursor: true }).setVisible(false);
+      t.on('pointerdown', () => { sellCrop(this.state, type); });
+      this.sellTexts.push(t);
+    });
+    (['wood', 'stone', 'egg', 'milk'] as const).forEach((type) => {
+      const t = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
+        .setInteractive({ useHandCursor: true }).setVisible(false);
+      t.on('pointerdown', () => { sellItem(this.state, type); });
+      this.itemSellTexts.push(t);
+    });
+
+    // UPGRADES panel
+    const allUpgrades: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest', 'demolishSpeed', 'carryCapacity'];
+    allUpgrades.forEach((type) => {
+      const t = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
+        .setInteractive({ useHandCursor: true }).setVisible(false);
+      t.on('pointerdown', () => { applyUpgrade(this.state, type); });
+      this.upgradeTexts.push(t);
+    });
+
+    // CROPS panel
+    CROP_TYPES.forEach((type) => {
+      const def = CROP_DEFS[type];
+      if (def.unlockCost === 0) return;
+      const t = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
+        .setInteractive({ useHandCursor: true }).setVisible(false);
+      t.on('pointerdown', () => { unlockCrop(this.state, type); });
+      this.cropUnlockTexts.push(t);
+    });
+
+    // ORDERS panel
+    for (let i = 0; i < MAX_ORDERS; i++) {
+      const ot = this.add.text(0, 0, '', FONT_SM).setScrollFactor(0).setDepth(49).setVisible(false);
+      this.orderTexts.push(ot);
+      const ct = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
+        .setInteractive({ useHandCursor: true }).setVisible(false);
+      ct.on('pointerdown', () => { const order = this.state.orders[i]; if (order) fulfillOrder(this.state, order); });
+      this.orderClaimTexts.push(ct);
+    }
+  }
+
+  private rebuildPanel(): void {
+    // Hide all panel content
+    [...this.sellTexts, ...this.itemSellTexts, ...this.upgradeTexts, ...this.cropUnlockTexts, ...this.orderTexts, ...this.orderClaimTexts]
+      .forEach(t => t.setVisible(false));
+
+    if (!this.activePanel) {
+      this.panelBg.setVisible(false);
+      return;
+    }
+
+    const panelY = CANVAS_H - TOOLBAR_H - PANEL_H;
+    this.panelBg.setVisible(true);
+    this.panelBg.clear();
+    this.panelBg.fillStyle(0x111122, 0.92);
+    this.panelBg.fillRect(0, panelY, VIEWPORT_W, PANEL_H);
+    this.panelBg.lineStyle(1, 0x333333, 1);
+    this.panelBg.lineBetween(0, panelY, VIEWPORT_W, panelY);
+
+    // Position content based on active panel
+    const x = 12;
+    let y = panelY + 8;
+
+    switch (this.activePanel) {
+      case 'sell':
+        this.sellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 16; });
+        this.itemSellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 16; });
+        break;
+      case 'upgrades':
+        this.upgradeTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 18; });
+        break;
+      case 'crops':
+        this.cropUnlockTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 18; });
+        break;
+      case 'orders':
+        for (let i = 0; i < MAX_ORDERS; i++) {
+          this.orderTexts[i]!.setPosition(x, y).setVisible(true); y += 16;
+          this.orderClaimTexts[i]!.setPosition(x, y).setVisible(true); y += 22;
+        }
+        break;
+    }
   }
 
   update(_time: number, delta: number): void {
     if (this.resetting) return;
 
-    // WASD camera movement
+    // WASD
     const camSpeed = 300 * (delta / 1000);
     const cam = this.cameras.main;
     if (this.wasdKeys.A.isDown) cam.scrollX -= camSpeed;
@@ -335,10 +319,7 @@ export class GameScene extends Phaser.Scene {
     updateOrders(this.state, delta);
 
     this.saveTimer += delta;
-    if (this.saveTimer >= SAVE_INTERVAL) {
-      this.saveTimer = 0;
-      saveGame(this.state);
-    }
+    if (this.saveTimer >= SAVE_INTERVAL) { this.saveTimer = 0; saveGame(this.state); }
 
     this.syncCrops();
     this.syncFacilities();
@@ -348,8 +329,27 @@ export class GameScene extends Phaser.Scene {
     this.drawUI();
   }
 
+  // === CLICK HANDLING ===
+
+  private clearModes(): void {
+    this.placingFacility = null;
+    this.placingFarmland = false;
+    this.demolishMode = false;
+    this.gatherMode = null;
+  }
+
+  private getBlockCoord(tx: number, ty: number) {
+    return { x: Math.floor(tx / BLOCK_SIZE), y: Math.floor(ty / BLOCK_SIZE) };
+  }
+  private isBlockOwned(bx: number, by: number) {
+    return this.state.purchasedBlocks.some(b => b.x === bx && b.y === by);
+  }
+  private isAdjacentToOwned(bx: number, by: number) {
+    return this.state.purchasedBlocks.some(b => (Math.abs(b.x - bx) + Math.abs(b.y - by)) === 1);
+  }
+
   private handleTileClick(pointer: Phaser.Input.Pointer): void {
-    if (pointer.x >= VIEWPORT_W) return;
+    if (pointer.rightButtonDown()) return;
 
     const worldX = pointer.x + this.cameras.main.scrollX;
     const worldY = pointer.y + this.cameras.main.scrollY;
@@ -358,10 +358,7 @@ export class GameScene extends Phaser.Scene {
     const tile = this.state.tiles[ty]?.[tx];
     if (!tile) return;
 
-    if (pointer.rightButtonDown()) return;
-
     const block = this.getBlockCoord(tx, ty);
-    // Click on unowned block → buy it
     if (!this.isBlockOwned(block.x, block.y)) {
       if (this.isAdjacentToOwned(block.x, block.y) && this.state.resources.money >= BLOCK_COST) {
         this.state.resources.money -= BLOCK_COST;
@@ -370,27 +367,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Demolish mode
     if (this.demolishMode) {
-      if (tile.facilityId !== null) {
-        this.demolishFacility(tile.facilityId);
-        this.demolishMode = false;
-      }
+      if (tile.facilityId !== null) { this.demolishFacility(tile.facilityId); this.demolishMode = false; }
       return;
     }
-
-    // Gather mode
     if (this.gatherMode) {
-      const woodTypes = ['wood', 'small_wood'];
-      const stoneTypes = ['stone', 'small_stone'];
-      const validTypes = this.gatherMode === 'wood' ? woodTypes : stoneTypes;
-      if (validTypes.includes(tile.type) && tile.durability > 0) {
-        tile.markedForDemolish = !tile.markedForDemolish;
-      }
+      const valid = this.gatherMode === 'wood' ? ['wood', 'small_wood'] : ['stone', 'small_stone'];
+      if (valid.includes(tile.type) && tile.durability > 0) tile.markedForDemolish = !tile.markedForDemolish;
       return;
     }
-
-    // Farmland placement mode
     if (this.placingFarmland) {
       if (tile.type === 'grass' && tile.facilityId === null) {
         const cost = CLEAR_COST['grass'] ?? 0;
@@ -403,28 +388,18 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
-
-    // Facility placement mode
     if (this.placingFacility) {
-      if (buildFacility(this.state, this.placingFacility, tx, ty)) {
-        this.placingFacility = null;
-      }
+      if (buildFacility(this.state, this.placingFacility, tx, ty)) this.placingFacility = null;
       return;
     }
-
-    // Facility tile: buy animal
     if (tile.facilityId !== null) {
       const fac = this.state.facilities.find(f => f.id === tile.facilityId);
       if (fac) buyAnimal(this.state, fac);
       return;
     }
-
-    // Soil tile: cycle assigned crop, or revert to grass if fallow + empty
     if (tile.type === 'soil') {
       if (tile.assignedCrop === null && tile.cropId === null) {
-        tile.type = 'grass';
-        tile.durability = 0;
-        this.updateTileImage(tx, ty);
+        tile.type = 'grass'; tile.durability = 0; this.updateTileImage(tx, ty);
       } else {
         const cycle: (CropType | null)[] = [...this.state.unlockedCrops, null];
         const idx = cycle.indexOf(tile.assignedCrop);
@@ -432,18 +407,28 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
+    if (tile.durability > 0) { tile.markedForDemolish = !tile.markedForDemolish; }
+  }
 
-    // Resource tile: toggle demolish mark
-    if (tile.durability > 0) {
-      tile.markedForDemolish = !tile.markedForDemolish;
-      return;
+  private demolishFacility(facilityId: number): void {
+    const idx = this.state.facilities.findIndex(f => f.id === facilityId);
+    if (idx === -1) return;
+    const fac = this.state.facilities[idx]!;
+    const def = FACILITY_DEFS[fac.type];
+    this.state.resources.money += Math.floor(def.cost / 2);
+    for (let dy = 0; dy < fac.height; dy++) {
+      for (let dx = 0; dx < fac.width; dx++) {
+        const t = this.state.tiles[fac.originY + dy]?.[fac.originX + dx];
+        if (t) { t.facilityId = null; t.type = 'grass'; this.updateTileImage(fac.originX + dx, fac.originY + dy); }
+      }
     }
+    this.state.facilities.splice(idx, 1);
   }
 
   private updatePlacementPreview(pointer: Phaser.Input.Pointer): void {
-    const g = this.placementPreview!;
+    const g = this.placementPreview;
     g.clear();
-    if (pointer.x >= VIEWPORT_W) return;
+    if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H) return;
 
     const worldX = pointer.x + this.cameras.main.scrollX;
     const worldY = pointer.y + this.cameras.main.scrollY;
@@ -452,100 +437,38 @@ export class GameScene extends Phaser.Scene {
 
     if (this.demolishMode) {
       const tile = this.state.tiles[ty]?.[tx];
-      if (tile?.facilityId !== null && tile?.facilityId !== undefined) {
+      if (tile?.facilityId != null) {
         const fac = this.state.facilities.find(f => f.id === tile.facilityId);
-        if (fac) {
-          g.lineStyle(2, 0xff0000, 0.8);
-          g.strokeRect(fac.originX * TILE_SIZE, fac.originY * TILE_SIZE, fac.width * TILE_SIZE, fac.height * TILE_SIZE);
-        }
+        if (fac) { g.lineStyle(2, 0xff0000, 0.8); g.strokeRect(fac.originX * TILE_SIZE, fac.originY * TILE_SIZE, fac.width * TILE_SIZE, fac.height * TILE_SIZE); }
       }
       return;
     }
-
     if (this.placingFarmland) {
       const tile = this.state.tiles[ty]?.[tx];
-      const canPlace = tile?.type === 'grass' && tile?.facilityId === null;
-      g.lineStyle(2, canPlace ? 0x4ade80 : 0xff0000, 0.8);
+      const ok = tile?.type === 'grass' && tile?.facilityId === null;
+      g.lineStyle(2, ok ? 0x4ade80 : 0xff0000, 0.8);
       g.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       return;
     }
-
-    if (!this.placingFacility) return;
-    const def = FACILITY_DEFS[this.placingFacility];
-    const canPlace = canBuildFacility(this.state, this.placingFacility, tx, ty);
-    g.lineStyle(2, canPlace ? 0x4ade80 : 0xff0000, 0.8);
-    g.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, def.width * TILE_SIZE, def.height * TILE_SIZE);
-  }
-
-  /** Create text fixed to screen (sidebar UI) */
-  private sidebarText(x: number, y: number, text: string, style: object): Phaser.GameObjects.Text {
-    return this.add.text(x, y, text, style).setScrollFactor(0).setDepth(51);
-  }
-
-  /** Create image fixed to screen (sidebar UI) */
-  private sidebarImage(x: number, y: number, key: string): Phaser.GameObjects.Image {
-    return this.add.image(x, y, key).setScrollFactor(0).setDepth(51);
-  }
-
-  private getBlockCoord(tx: number, ty: number): { x: number; y: number } {
-    return { x: Math.floor(tx / BLOCK_SIZE), y: Math.floor(ty / BLOCK_SIZE) };
-  }
-
-  private isBlockOwned(bx: number, by: number): boolean {
-    return this.state.purchasedBlocks.some(b => b.x === bx && b.y === by);
-  }
-
-  private isAdjacentToOwned(bx: number, by: number): boolean {
-    return this.state.purchasedBlocks.some(b =>
-      (Math.abs(b.x - bx) + Math.abs(b.y - by)) === 1,
-    );
-  }
-
-  private clearBuildModes(): void {
-    this.placingFacility = null;
-    this.placingFarmland = false;
-    this.demolishMode = false;
-    this.gatherMode = null;
-  }
-
-  private demolishFacility(facilityId: number): void {
-    const idx = this.state.facilities.findIndex(f => f.id === facilityId);
-    if (idx === -1) return;
-    const fac = this.state.facilities[idx]!;
-    const def = FACILITY_DEFS[fac.type];
-
-    // Refund 50%
-    this.state.resources.money += Math.floor(def.cost / 2);
-
-    // Clear tiles
-    for (let dy = 0; dy < fac.height; dy++) {
-      for (let dx = 0; dx < fac.width; dx++) {
-        const tile = this.state.tiles[fac.originY + dy]?.[fac.originX + dx];
-        if (tile) {
-          tile.facilityId = null;
-          tile.type = 'grass';
-          this.updateTileImage(fac.originX + dx, fac.originY + dy);
-        }
-      }
+    if (this.placingFacility) {
+      const def = FACILITY_DEFS[this.placingFacility];
+      const ok = canBuildFacility(this.state, this.placingFacility, tx, ty);
+      g.lineStyle(2, ok ? 0x4ade80 : 0xff0000, 0.8);
+      g.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, def.width * TILE_SIZE, def.height * TILE_SIZE);
     }
-
-    this.state.facilities.splice(idx, 1);
   }
 
   private updateTileImage(x: number, y: number): void {
     const tile = this.state.tiles[y]?.[x];
     if (!tile) return;
     const img = this.tileImages[y]?.[x];
-    if (!img) return;
-    img.setTexture(getTileTextureKey(tile.type));
-    img.setDisplaySize(TILE_SIZE - 1, TILE_SIZE - 1);
+    if (img) { img.setTexture(getTileTextureKey(tile.type)); img.setDisplaySize(TILE_SIZE - 1, TILE_SIZE - 1); }
   }
 
   private simulateOffline(ms: number): void {
     const cappedMs = Math.min(ms, 3_600_000);
-    const step = 1000;
-    for (let t = 0; t < cappedMs; t += step) {
-      const dt = Math.min(step, cappedMs - t);
+    for (let t = 0; t < cappedMs; t += 1000) {
+      const dt = Math.min(1000, cappedMs - t);
       updateCrops(this.state, dt);
       updateWorkers(this.state, dt);
       updateFacilities(this.state, dt);
@@ -553,111 +476,83 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // === SYNC ===
+
   private syncCrops(): void {
-    const activeCropIds = new Set<number>();
-
+    const activeIds = new Set<number>();
     for (const crop of this.state.crops) {
-      activeCropIds.add(crop.id);
-      const textureKey = getCropTextureKey(crop.type, crop.stage);
-
+      activeIds.add(crop.id);
+      const key = getCropTextureKey(crop.type, crop.stage);
       let img = this.cropImages.get(crop.id);
-      if (!img) {
-        img = this.add.image(0, 0, textureKey);
-        img.setDepth(5);
-        this.cropImages.set(crop.id, img);
-      }
-      img.setTexture(textureKey);
-      img.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE / 2, crop.tileY * TILE_SIZE + TILE_SIZE / 2);
-      img.setDisplaySize(TILE_SIZE - 4, TILE_SIZE - 4);
-      img.setVisible(true);
+      if (!img) { img = this.add.image(0, 0, key).setDepth(5); this.cropImages.set(crop.id, img); }
+      img.setTexture(key).setPosition(crop.tileX * TILE_SIZE + TILE_SIZE / 2, crop.tileY * TILE_SIZE + TILE_SIZE / 2).setDisplaySize(TILE_SIZE - 4, TILE_SIZE - 4).setVisible(true);
 
-      let waterIcon = this.cropWaterIcons.get(crop.id);
-      if (!waterIcon) {
-        waterIcon = this.add.image(0, 0, 'icon_water');
-        waterIcon.setDepth(8);
-        this.cropWaterIcons.set(crop.id, waterIcon);
-      }
-      waterIcon.setPosition(crop.tileX * TILE_SIZE + 10, crop.tileY * TILE_SIZE + 10);
-      waterIcon.setVisible(crop.needsWater);
+      let wi = this.cropWaterIcons.get(crop.id);
+      if (!wi) { wi = this.add.image(0, 0, 'icon_water').setDepth(8); this.cropWaterIcons.set(crop.id, wi); }
+      wi.setPosition(crop.tileX * TILE_SIZE + 10, crop.tileY * TILE_SIZE + 10).setVisible(crop.needsWater);
 
-      let weedIcon = this.cropWeedIcons.get(crop.id);
-      if (!weedIcon) {
-        weedIcon = this.add.image(0, 0, 'icon_weed');
-        weedIcon.setDepth(8);
-        this.cropWeedIcons.set(crop.id, weedIcon);
-      }
-      weedIcon.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 10, crop.tileY * TILE_SIZE + 10);
-      weedIcon.setVisible(crop.needsWeeding);
+      let we = this.cropWeedIcons.get(crop.id);
+      if (!we) { we = this.add.image(0, 0, 'icon_weed').setDepth(8); this.cropWeedIcons.set(crop.id, we); }
+      we.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 10, crop.tileY * TILE_SIZE + 10).setVisible(crop.needsWeeding);
     }
-
     for (const [id, img] of this.cropImages) {
-      if (!activeCropIds.has(id)) {
-        img.destroy();
-        this.cropImages.delete(id);
-        this.cropWaterIcons.get(id)?.destroy();
-        this.cropWaterIcons.delete(id);
-        this.cropWeedIcons.get(id)?.destroy();
-        this.cropWeedIcons.delete(id);
-      }
+      if (!activeIds.has(id)) { img.destroy(); this.cropImages.delete(id); this.cropWaterIcons.get(id)?.destroy(); this.cropWaterIcons.delete(id); this.cropWeedIcons.get(id)?.destroy(); this.cropWeedIcons.delete(id); }
     }
   }
 
   private syncFacilities(): void {
     const activeIds = new Set<number>();
-
     for (const fac of this.state.facilities) {
       activeIds.add(fac.id);
-      const textureKey = `facility_${fac.type}`;
-      const pixelW = fac.width * TILE_SIZE;
-      const pixelH = fac.height * TILE_SIZE;
-
+      const key = `facility_${fac.type}`;
+      const pw = fac.width * TILE_SIZE, ph = fac.height * TILE_SIZE;
       let img = this.facilityImages.get(fac.id);
-      if (!img) {
-        img = this.add.image(0, 0, textureKey);
-        img.setDepth(3);
-        this.facilityImages.set(fac.id, img);
-      }
-      img.setTexture(textureKey);
-      img.setPosition(
-        fac.originX * TILE_SIZE + pixelW / 2,
-        fac.originY * TILE_SIZE + pixelH / 2,
-      );
-      img.setDisplaySize(pixelW - 2, pixelH - 2);
-      img.setVisible(true);
+      if (!img) { img = this.add.image(0, 0, key).setDepth(3); this.facilityImages.set(fac.id, img); }
+      img.setTexture(key).setPosition(fac.originX * TILE_SIZE + pw / 2, fac.originY * TILE_SIZE + ph / 2).setDisplaySize(pw - 2, ph - 2).setVisible(true);
     }
-
-    for (const [id, img] of this.facilityImages) {
-      if (!activeIds.has(id)) {
-        img.destroy();
-        this.facilityImages.delete(id);
-      }
-    }
+    for (const [id, img] of this.facilityImages) { if (!activeIds.has(id)) { img.destroy(); this.facilityImages.delete(id); } }
   }
 
   private syncWorkers(): void {
-    while (this.workerImages.length < this.state.workers.length) {
-      const img = this.add.image(0, 0, 'worker_idle');
-      img.setDepth(15);
-      this.workerImages.push(img);
-    }
-
+    while (this.workerImages.length < this.state.workers.length) { this.workerImages.push(this.add.image(0, 0, 'worker_idle').setDepth(15)); }
     for (let i = 0; i < this.state.workers.length; i++) {
-      const worker = this.state.workers[i]!;
-      const img = this.workerImages[i]!;
-      img.setTexture(worker.state === 'working' ? 'worker_working' : 'worker_idle');
-      img.setPosition(worker.x, worker.y);
-      img.setDisplaySize(16, 16);
-      img.setVisible(true);
+      const w = this.state.workers[i]!;
+      this.workerImages[i]!.setTexture(w.state === 'working' ? 'worker_working' : 'worker_idle').setPosition(w.x, w.y).setDisplaySize(16, 16).setVisible(true);
     }
+    for (let i = this.state.workers.length; i < this.workerImages.length; i++) this.workerImages[i]!.setVisible(false);
+  }
 
-    for (let i = this.state.workers.length; i < this.workerImages.length; i++) {
-      this.workerImages[i]!.setVisible(false);
+  private syncTileVisibility(): void {
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+      for (let x = 0; x < MAP_WIDTH; x++) {
+        const b = this.getBlockCoord(x, y);
+        this.tileImages[y]?.[x]?.setVisible(this.isBlockOwned(b.x, b.y));
+      }
     }
+    // Lock icons
+    const activeLocks = new Set<string>();
+    const maxBx = Math.floor(MAP_WIDTH / BLOCK_SIZE), maxBy = Math.floor(MAP_HEIGHT / BLOCK_SIZE);
+    const blockPx = BLOCK_SIZE * TILE_SIZE;
+    for (let by = 0; by < maxBy; by++) {
+      for (let bx = 0; bx < maxBx; bx++) {
+        if (this.isBlockOwned(bx, by) || !this.isAdjacentToOwned(bx, by)) continue;
+        const key = `${bx},${by}`;
+        activeLocks.add(key);
+        let cx = bx * blockPx + blockPx / 2, cy = by * blockPx + blockPx / 2;
+        if (bx > 0 && this.isBlockOwned(bx - 1, by)) cx = bx * blockPx + TILE_SIZE / 2;
+        else if (bx < maxBx - 1 && this.isBlockOwned(bx + 1, by)) cx = (bx + 1) * blockPx - TILE_SIZE / 2;
+        else if (by > 0 && this.isBlockOwned(bx, by - 1)) { cx = bx * blockPx + blockPx / 2; cy = by * blockPx + TILE_SIZE / 2; }
+        else if (by < maxBy - 1 && this.isBlockOwned(bx, by + 1)) { cx = bx * blockPx + blockPx / 2; cy = (by + 1) * blockPx - TILE_SIZE / 2; }
+        let li = this.lockImages.get(key);
+        if (!li) { li = this.add.image(cx, cy, 'icon_lock').setDepth(25); this.lockImages.set(key, li); }
+        li.setPosition(cx, cy).setVisible(true);
+      }
+    }
+    for (const [k, img] of this.lockImages) { if (!activeLocks.has(k)) img.setVisible(false); }
   }
 
   private drawIndicators(): void {
     const active = new Set<string>();
-
     for (const row of this.state.tiles) {
       for (const tile of row) {
         if (tile.type !== 'soil' || tile.facilityId !== null) continue;
@@ -665,192 +560,107 @@ export class GameScene extends Phaser.Scene {
         if (!this.isBlockOwned(blk.x, blk.y)) continue;
         const key = `${tile.x},${tile.y}`;
         active.add(key);
-        const textureKey = tile.assignedCrop ? `icon_${tile.assignedCrop}` : 'icon_fallow';
-
+        const texKey = tile.assignedCrop ? `icon_${tile.assignedCrop}` : 'icon_fallow';
         let img = this.indicatorImages.get(key);
-        if (!img) {
-          img = this.add.image(0, 0, textureKey);
-          img.setDepth(10);
-          this.indicatorImages.set(key, img);
-        }
-        img.setTexture(textureKey);
-        img.setPosition(tile.x * TILE_SIZE + 7, tile.y * TILE_SIZE + 7);
-        img.setVisible(true);
+        if (!img) { img = this.add.image(0, 0, texKey).setDepth(10); this.indicatorImages.set(key, img); }
+        img.setTexture(texKey).setPosition(tile.x * TILE_SIZE + 7, tile.y * TILE_SIZE + 7).setVisible(true);
       }
     }
+    for (const [k, img] of this.indicatorImages) { if (!active.has(k)) img.setVisible(false); }
 
-    for (const [key, img] of this.indicatorImages) {
-      if (!active.has(key)) {
-        img.setVisible(false);
-      }
-    }
-
-    // Demolish markers
     const g = this.demolishOverlay;
     g.clear();
     for (const row of this.state.tiles) {
       for (const tile of row) {
         if (!tile.markedForDemolish || tile.durability <= 0) continue;
-        const bx = tile.x * TILE_SIZE;
-        const by = tile.y * TILE_SIZE;
         g.lineStyle(2, 0xff4444, 0.8);
-        g.strokeRect(bx + 1, by + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+        g.strokeRect(tile.x * TILE_SIZE + 1, tile.y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
       }
     }
   }
 
-  private syncTileVisibility(): void {
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-      for (let x = 0; x < MAP_WIDTH; x++) {
-        const block = this.getBlockCoord(x, y);
-        const owned = this.isBlockOwned(block.x, block.y);
-        const img = this.tileImages[y]?.[x];
-        if (img) img.setVisible(owned);
-      }
-    }
-
-    // Lock icons — placed on the owned block's edge facing the unowned block
-    const activeLocks = new Set<string>();
-    const maxBx = Math.floor(MAP_WIDTH / BLOCK_SIZE);
-    const maxBy = Math.floor(MAP_HEIGHT / BLOCK_SIZE);
-    const blockPx = BLOCK_SIZE * TILE_SIZE;
-    for (let by = 0; by < maxBy; by++) {
-      for (let bx = 0; bx < maxBx; bx++) {
-        if (this.isBlockOwned(bx, by)) continue;
-        if (!this.isAdjacentToOwned(bx, by)) continue;
-        const key = `${bx},${by}`;
-        activeLocks.add(key);
-
-        // Place lock one tile into the unowned block, on the side facing an owned block
-        let cx = bx * blockPx + blockPx / 2;
-        let cy = by * blockPx + blockPx / 2;
-        if (bx > 0 && this.isBlockOwned(bx - 1, by)) {
-          cx = bx * blockPx + TILE_SIZE / 2;
-          cy = by * blockPx + blockPx / 2;
-        } else if (bx < maxBx - 1 && this.isBlockOwned(bx + 1, by)) {
-          cx = (bx + 1) * blockPx - TILE_SIZE / 2;
-          cy = by * blockPx + blockPx / 2;
-        } else if (by > 0 && this.isBlockOwned(bx, by - 1)) {
-          cx = bx * blockPx + blockPx / 2;
-          cy = by * blockPx + TILE_SIZE / 2;
-        } else if (by < maxBy - 1 && this.isBlockOwned(bx, by + 1)) {
-          cx = bx * blockPx + blockPx / 2;
-          cy = (by + 1) * blockPx - TILE_SIZE / 2;
-        }
-
-        let lockImg = this.lockImages.get(key);
-        if (!lockImg) {
-          lockImg = this.add.image(cx, cy, 'icon_lock');
-          lockImg.setDepth(25);
-          this.lockImages.set(key, lockImg);
-        }
-        lockImg.setPosition(cx, cy);
-        lockImg.setVisible(true);
-      }
-    }
-    for (const [key, img] of this.lockImages) {
-      if (!activeLocks.has(key)) {
-        img.setVisible(false);
-      }
-    }
-  }
+  // === DRAW UI ===
 
   private drawUI(): void {
     const { money } = this.state.resources;
-    const workers = this.state.workers.length;
-    const growing = this.state.crops.length;
-
     const stored = getCurrentStorage(this.state);
     const cap = getWarehouseCapacity(this.state);
-    this.statusText.setText(`$${money}  W:${workers}  G:${growing}\nStorage: ${stored}/${cap}`);
+    this.hudText.setText(`$${money}  Storage:${stored}/${cap}  W:${this.state.workers.length}  G:${this.state.crops.length}`);
 
+    // Worker button
+    const wb = (this as any)._workerBtn as Phaser.GameObjects.Text;
     const canCraft = canCraftWorker(this.state);
-    this.craftText.setText(`[+Worker] $${WORKER_CRAFT_COST.money}`);
-    this.craftText.setColor(canCraft ? '#4ade80' : '#555555');
+    wb.setText(`+W $${WORKER_CRAFT_COST.money}`);
+    wb.setColor(canCraft ? '#4ade80' : '#555555');
 
-    // Dynamic inventory — only show items with stock or unlocked crops
-    let invY = this.inventoryBaseY;
+    // Mode hint
+    let hint = '';
+    if (this.placingFarmland) hint = 'Place farmland (ESC cancel)';
+    else if (this.placingFacility) hint = `Place ${FACILITY_DEFS[this.placingFacility].label} (ESC cancel)`;
+    else if (this.demolishMode) hint = 'Click facility to demolish';
+    else if (this.gatherMode === 'wood') hint = 'Click wood to gather';
+    else if (this.gatherMode === 'stone') hint = 'Click stone to gather';
+    this.modeText.setText(hint);
+
+    // Active panel content
+    if (this.activePanel === 'sell') this.drawSellPanel();
+    if (this.activePanel === 'upgrades') this.drawUpgradesPanel();
+    if (this.activePanel === 'crops') this.drawCropsPanel();
+    if (this.activePanel === 'orders') this.drawOrdersPanel();
+  }
+
+  private drawSellPanel(): void {
     CROP_TYPES.forEach((type, i) => {
+      const count = this.state.resources.items[type] ?? 0;
       const unlocked = isCropUnlocked(this.state, type);
-      const count = this.state.resources.items[type] ?? 0;
-      const visible = unlocked && count > 0;
-      this.sellTexts[i]!.setVisible(visible);
-      if (visible) {
-        const price = CROP_DEFS[type].sellPrice;
-        this.sellTexts[i]!.setText(`${type} x${count} [$${price}]`);
-        this.sellTexts[i]!.setPosition(SIDEBAR_X, invY);
-        this.sellTexts[i]!.setColor('#4ade80');
-        invY += 18;
-      }
+      if (!unlocked) { this.sellTexts[i]!.setVisible(false); return; }
+      this.sellTexts[i]!.setText(`${type} x${count} [$${CROP_DEFS[type].sellPrice}]`);
+      this.sellTexts[i]!.setColor(count > 0 ? '#4ade80' : '#555555');
     });
-    const extraItemTypes: Array<{ type: 'wood' | 'stone' | 'egg' | 'milk'; label: string }> = [
-      { type: 'wood', label: 'wood' },
-      { type: 'stone', label: 'stone' },
-      { type: 'egg', label: 'egg' },
-      { type: 'milk', label: 'milk' },
+    const extras: Array<{ type: 'wood' | 'stone' | 'egg' | 'milk'; label: string }> = [
+      { type: 'wood', label: 'wood' }, { type: 'stone', label: 'stone' },
+      { type: 'egg', label: 'egg' }, { type: 'milk', label: 'milk' },
     ];
-    extraItemTypes.forEach(({ type, label }, i) => {
+    extras.forEach(({ type, label }, i) => {
       const count = this.state.resources.items[type] ?? 0;
-      this.itemSellTexts[i]!.setVisible(count > 0);
-      if (count > 0) {
-        const price = ITEM_SELL_PRICES[type] ?? 0;
-        this.itemSellTexts[i]!.setText(`${label} x${count} [$${price}]`);
-        this.itemSellTexts[i]!.setPosition(SIDEBAR_X, invY);
-        this.itemSellTexts[i]!.setColor('#4ade80');
-        invY += 18;
-      }
+      const price = ITEM_SELL_PRICES[type] ?? 0;
+      this.itemSellTexts[i]!.setText(`${label} x${count} [$${price}]`);
+      this.itemSellTexts[i]!.setColor(count > 0 ? '#4ade80' : '#555555');
     });
+  }
 
-    // Build buttons — index 0 = farmland
-    const farmCost = CLEAR_COST['grass'] ?? 0;
-    this.buildTexts[0]!.setText(`Farmland $${farmCost}`);
-    this.buildTexts[0]!.setColor(this.placingFarmland ? '#facc15' : this.state.resources.money >= farmCost ? '#4ade80' : '#555555');
-
-    // index 1..N = facilities
-    FACILITY_TYPES.forEach((type, i) => {
-      const def = FACILITY_DEFS[type];
-      const canAfford = this.state.resources.money >= def.cost;
-      const active = this.placingFacility === type;
-      const owned = this.state.facilities.filter(f => f.type === type);
-      const totalAnimals = owned.reduce((s, f) => s + f.animalCount, 0);
-      const totalCap = owned.reduce((s, f) => s + FACILITY_DEFS[f.type].maxAnimals, 0);
-      let label = `${def.label} $${def.cost}`;
-      if (owned.length > 0) label += ` [${totalAnimals}/${totalCap}]`;
-      this.buildTexts[i + 1]!.setText(label);
-      this.buildTexts[i + 1]!.setColor(active ? '#facc15' : canAfford ? '#4ade80' : '#555555');
+  private drawUpgradesPanel(): void {
+    const types: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest', 'demolishSpeed', 'carryCapacity'];
+    types.forEach((type, i) => {
+      const def = UPGRADE_DEFS[type];
+      const level = this.state.upgrades[type];
+      const maxed = level >= def.maxLevel;
+      const cost = maxed ? 0 : getUpgradeCost(type, level);
+      const can = canUpgrade(this.state, type);
+      let effect: string;
+      if (type === 'autoHarvest') effect = level > 0 ? 'ON' : 'OFF';
+      else if (type === 'carryCapacity') effect = `${BASE_CARRY_CAPACITY + level * 2}`;
+      else effect = `x${getUpgradeMultiplier(this.state, type).toFixed(1)}`;
+      const label = maxed ? `${def.label} Lv${level} ${effect} MAX` : `${def.label} Lv${level} ${effect} $${cost}`;
+      this.upgradeTexts[i]!.setText(label);
+      this.upgradeTexts[i]!.setColor(maxed ? '#facc15' : can ? '#4ade80' : '#555555');
     });
+  }
 
-    // Demolish button
-    const demolishIdx = FACILITY_TYPES.length + 1;
-    this.buildTexts[demolishIdx]!.setColor(this.demolishMode ? '#ff0000' : '#aaaaaa');
+  private drawCropsPanel(): void {
+    const lockable = CROP_TYPES.filter(t => CROP_DEFS[t].unlockCost > 0);
+    lockable.forEach((type, i) => {
+      const def = CROP_DEFS[type];
+      const unlocked = isCropUnlocked(this.state, type);
+      const can = canUnlockCrop(this.state, type);
+      const reqsMet = def.requires.every(r => isCropUnlocked(this.state, r));
+      if (unlocked) { this.cropUnlockTexts[i]!.setText(`${type} - unlocked`).setColor('#facc15'); }
+      else if (reqsMet) { this.cropUnlockTexts[i]!.setText(`${type} $${def.unlockCost}`).setColor(can ? '#4ade80' : '#aaaaaa'); }
+      else { this.cropUnlockTexts[i]!.setText(`${type} (need ${def.requires.filter(r => !isCropUnlocked(this.state, r)).join('+')})`).setColor('#555555'); }
+    });
+  }
 
-    // Gather buttons
-    const gatherWoodIdx = demolishIdx + 1;
-    const gatherStoneIdx = demolishIdx + 2;
-    this.buildTexts[gatherWoodIdx]!.setColor(this.gatherMode === 'wood' ? '#facc15' : '#aaaaaa');
-    this.buildTexts[gatherStoneIdx]!.setColor(this.gatherMode === 'stone' ? '#facc15' : '#aaaaaa');
-
-    let buildHint = '';
-    if (this.demolishMode) {
-      buildHint = 'Click facility to demolish';
-    } else if (this.gatherMode === 'wood') {
-      buildHint = 'Click wood to mark gather';
-    } else if (this.gatherMode === 'stone') {
-      buildHint = 'Click stone to mark gather';
-    } else if (this.placingFarmland) {
-      buildHint = 'Click grass to place farmland';
-    } else if (this.placingFacility) {
-      buildHint = 'Click to place (ESC cancel)';
-    } else if (this.state.facilities.length > 0) {
-      const fac = this.state.facilities.find(f => canBuyAnimal(this.state, f));
-      if (fac) {
-        const def = FACILITY_DEFS[fac.type];
-        buildHint = `Click facility: +${def.animalName} $${def.animalCost}`;
-      }
-    }
-    this.buildModeText.setText(buildHint);
-
-    // Orders
+  private drawOrdersPanel(): void {
     for (let i = 0; i < MAX_ORDERS; i++) {
       const order = this.state.orders[i];
       if (!order) {
@@ -859,58 +669,12 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       const secs = Math.ceil(order.timeRemaining / 1000);
-      const mins = Math.floor(secs / 60);
-      const s = secs % 60;
-      const timeStr = `${mins}:${String(s).padStart(2, '0')}`;
-      const reqs = order.requirements.map(r => `${r.crop} x${r.amount}`).join('  ');
-      this.orderTexts[i]!.setText(`#${order.id} [${timeStr}]  ${reqs}`);
-
+      const timeStr = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      this.orderTexts[i]!.setText(`#${order.id} [${timeStr}] ${order.requirements.map(r => `${r.crop} x${r.amount}`).join('  ')}`);
       const canClaim = canFulfillOrder(this.state, order);
-      this.orderClaimTexts[i]!.setText(`[Claim $${order.reward}]`);
-      this.orderClaimTexts[i]!.setColor(canClaim ? '#4ade80' : '#555555');
-      if (canClaim) {
-        this.orderClaimTexts[i]!.setInteractive({ useHandCursor: true });
-      } else {
-        this.orderClaimTexts[i]!.disableInteractive();
-      }
+      this.orderClaimTexts[i]!.setText(`[Claim $${order.reward}]`).setColor(canClaim ? '#4ade80' : '#555555');
+      if (canClaim) this.orderClaimTexts[i]!.setInteractive({ useHandCursor: true });
+      else this.orderClaimTexts[i]!.disableInteractive();
     }
-
-    // Upgrades
-    const upgradeTypes: UpgradeType[] = ['workerSpeed', 'growthSpeed', 'maintenanceInterval', 'autoHarvest'];
-    upgradeTypes.forEach((type, i) => {
-      const def = UPGRADE_DEFS[type];
-      const level = this.state.upgrades[type];
-      const maxed = level >= def.maxLevel;
-      const cost = maxed ? 0 : getUpgradeCost(type, level);
-      const can = canUpgrade(this.state, type);
-      const effect = type === 'autoHarvest'
-        ? (level > 0 ? 'ON' : 'OFF')
-        : `x${getUpgradeMultiplier(this.state, type).toFixed(1)}`;
-      const label = maxed
-        ? `${def.label} Lv${level} ${effect} MAX`
-        : `${def.label} Lv${level} ${effect} $${cost}`;
-      this.upgradeTexts[i]!.setText(label);
-      this.upgradeTexts[i]!.setColor(maxed ? '#facc15' : can ? '#4ade80' : '#555555');
-    });
-
-    // Crop unlock tree
-    const lockableCrops = CROP_TYPES.filter(t => CROP_DEFS[t].unlockCost > 0);
-    lockableCrops.forEach((type, i) => {
-      const def = CROP_DEFS[type];
-      const unlocked = isCropUnlocked(this.state, type);
-      const can = canUnlockCrop(this.state, type);
-      const reqsMet = def.requires.every(r => isCropUnlocked(this.state, r));
-      if (unlocked) {
-        this.cropUnlockTexts[i]!.setText(`${type} - unlocked`);
-        this.cropUnlockTexts[i]!.setColor('#facc15');
-      } else if (reqsMet) {
-        this.cropUnlockTexts[i]!.setText(`${type} $${def.unlockCost}`);
-        this.cropUnlockTexts[i]!.setColor(can ? '#4ade80' : '#aaaaaa');
-      } else {
-        const reqs = def.requires.filter(r => !isCropUnlocked(this.state, r)).join('+');
-        this.cropUnlockTexts[i]!.setText(`${type} (need ${reqs})`);
-        this.cropUnlockTexts[i]!.setColor('#555555');
-      }
-    });
   }
 }

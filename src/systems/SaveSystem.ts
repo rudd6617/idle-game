@@ -39,10 +39,13 @@ function migrateState(state: GameState): void {
   }
 
   if (!state.upgrades) {
-    state.upgrades = { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0 };
+    state.upgrades = { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0, carryCapacity: 0 };
   }
   if ((state.upgrades as any).demolishSpeed === undefined) {
     (state.upgrades as any).demolishSpeed = 0;
+  }
+  if ((state.upgrades as any).carryCapacity === undefined) {
+    (state.upgrades as any).carryCapacity = 0;
   }
 
   if (!state.orders) state.orders = [];
@@ -66,7 +69,17 @@ function migrateState(state: GameState): void {
   }
 
   for (const w of state.workers) {
-    if (w.carryingItem === undefined) w.carryingItem = null;
+    // Migrate old carryingItem → carryingItems
+    const wAny = w as any;
+    if (wAny.carryingItem !== undefined) {
+      if (wAny.carryingItem) {
+        w.carryingItems = { [wAny.carryingItem]: 1 };
+      } else {
+        w.carryingItems = {};
+      }
+      delete wAny.carryingItem;
+    }
+    if (!w.carryingItems) w.carryingItems = {};
   }
 
   if (!state.unlockedCrops) state.unlockedCrops = ['carrot', 'wheat', 'tomato'];

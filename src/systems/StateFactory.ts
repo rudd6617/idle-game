@@ -73,7 +73,7 @@ export function createInitialState(): GameState {
         state: 'idle',
         currentTask: null,
         workTimer: 0,
-        carryingItem: null,
+        carryingItems: {},
       },
     ],
     facilities: [
@@ -82,7 +82,7 @@ export function createInitialState(): GameState {
     purchasedBlocks: [{ x: 0, y: 0 }],
     resources: { money: 200, items: {} },
     unlockedCrops: ['carrot', 'wheat'],
-    upgrades: { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0 },
+    upgrades: { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0, carryCapacity: 0 },
     orders: [],
     orderRefreshTimer: 0,
     nextCropId: 1,
