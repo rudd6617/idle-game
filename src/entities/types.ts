@@ -1,6 +1,6 @@
 // === Tile ===
 
-export type TileType = 'soil' | 'grass' | 'tree' | 'blocked';
+export type TileType = 'soil' | 'grass' | 'wood' | 'stone' | 'small_wood' | 'small_stone';
 
 export interface Tile {
   x: number;
@@ -8,18 +8,23 @@ export interface Tile {
   type: TileType;
   cropId: number | null;
   assignedCrop: CropType | null;
+  facilityId: number | null;
+  durability: number;
+  markedForDemolish: boolean;
 }
 
 // === Crop ===
 
-export type CropType = 'carrot' | 'wheat' | 'tomato';
+export type CropType = 'carrot' | 'wheat' | 'tomato' | 'potato' | 'strawberry' | 'corn' | 'pumpkin' | 'sunflower' | 'grape' | 'coffee';
 
 export interface CropDef {
   type: CropType;
-  growTime: number;       // ms to fully grow
-  waterInterval: number;  // ms between needing water
-  weedInterval: number;   // ms between needing weeding
+  growTime: number;
+  waterInterval: number;
+  weedInterval: number;
   sellPrice: number;
+  unlockCost: number;
+  requires: CropType[];
 }
 
 export type CropStage = 'seed' | 'growing' | 'ready';
@@ -30,11 +35,32 @@ export interface Crop {
   tileY: number;
   type: CropType;
   stage: CropStage;
-  growthTimer: number;    // ms remaining to next stage
+  growthTimer: number;
   needsWater: boolean;
   needsWeeding: boolean;
-  waterTimer: number;     // ms until needs water
-  weedTimer: number;      // ms until needs weeding
+  waterTimer: number;
+  weedTimer: number;
+}
+
+// === Items ===
+
+export type ItemType = CropType | 'egg' | 'milk' | 'wood' | 'stone';
+
+// === Facility ===
+
+export type FacilityType = 'chicken_coop' | 'cow_barn' | 'warehouse';
+
+export interface Facility {
+  id: number;
+  type: FacilityType;
+  originX: number;
+  originY: number;
+  width: number;
+  height: number;
+  animalCount: number;
+  productionTimer: number;
+  inputBuffer: Partial<Record<ItemType, number>>;
+  outputBuffer: Partial<Record<ItemType, number>>;
 }
 
 // === Worker ===
@@ -42,7 +68,7 @@ export interface Crop {
 export type WorkerState = 'idle' | 'moving' | 'working';
 
 export interface Task {
-  type: 'plant' | 'water' | 'weed' | 'harvest';
+  type: 'plant' | 'water' | 'weed' | 'harvest' | 'feed' | 'collect' | 'deposit' | 'demolish';
   targetX: number;
   targetY: number;
 }
@@ -53,19 +79,20 @@ export interface Worker {
   y: number;
   state: WorkerState;
   currentTask: Task | null;
-  workTimer: number;      // ms remaining on current task
+  workTimer: number;
+  carryingItem: ItemType | null;
 }
 
 // === Resources ===
 
 export interface Resources {
   money: number;
-  crops: Partial<Record<CropType, number>>;
+  items: Partial<Record<ItemType, number>>;
 }
 
 // === Upgrades ===
 
-export type UpgradeType = 'workerSpeed' | 'growthSpeed' | 'maintenanceInterval' | 'autoHarvest';
+export type UpgradeType = 'workerSpeed' | 'growthSpeed' | 'maintenanceInterval' | 'autoHarvest' | 'demolishSpeed';
 
 // === Orders ===
 
@@ -78,21 +105,30 @@ export interface Order {
   id: number;
   requirements: OrderRequirement[];
   reward: number;
-  timeRemaining: number;  // ms
+  timeRemaining: number;
 }
 
 // === Game State ===
+
+export interface BlockCoord {
+  x: number;
+  y: number;
+}
 
 export interface GameState {
   tiles: Tile[][];
   crops: Crop[];
   workers: Worker[];
+  facilities: Facility[];
+  purchasedBlocks: BlockCoord[];
   resources: Resources;
+  unlockedCrops: CropType[];
   upgrades: Record<UpgradeType, number>;
   orders: Order[];
-  orderRefreshTimer: number;  // ms until next order refill
+  orderRefreshTimer: number;
   nextCropId: number;
   nextWorkerId: number;
   nextOrderId: number;
+  nextFacilityId: number;
   lastSaveTime: number;
 }

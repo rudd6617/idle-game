@@ -1,13 +1,14 @@
 import Phaser from 'phaser';
 import { GameScene } from './scenes/GameScene';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from './entities/constants';
+import { TILE_SIZE, BLOCK_SIZE } from './entities/constants';
 
+const VIEWPORT_W = BLOCK_SIZE * TILE_SIZE + TILE_SIZE; // one block + 1 tile padding
 const SIDEBAR_W = 220;
 
 new Phaser.Game({
   type: Phaser.AUTO,
-  width: MAP_WIDTH * TILE_SIZE + SIDEBAR_W,
-  height: MAP_HEIGHT * TILE_SIZE,
+  width: VIEWPORT_W + SIDEBAR_W,
+  height: VIEWPORT_W,
   backgroundColor: '#1a1a2e',
   scene: [GameScene],
   parent: document.body,

@@ -64,7 +64,7 @@ export function updateOrders(state: GameState, dt: number): void {
 
 export function canFulfillOrder(state: GameState, order: Order): boolean {
   return order.requirements.every(
-    req => (state.resources.crops[req.crop] ?? 0) >= req.amount,
+    req => (state.resources.items[req.crop] ?? 0) >= req.amount,
   );
 }
 
@@ -72,7 +72,7 @@ export function fulfillOrder(state: GameState, order: Order): boolean {
   if (!canFulfillOrder(state, order)) return false;
 
   for (const req of order.requirements) {
-    state.resources.crops[req.crop] = (state.resources.crops[req.crop] ?? 0) - req.amount;
+    state.resources.items[req.crop] = (state.resources.items[req.crop] ?? 0) - req.amount;
   }
   state.resources.money += order.reward;
 

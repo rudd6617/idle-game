@@ -1,5 +1,5 @@
-import type { GameState, Tile } from '../entities/types';
-import { SAVE_KEY, MAP_WIDTH, MAP_HEIGHT } from '../entities/constants';
+import type { GameState, Tile, TileType } from '../entities/types';
+import { SAVE_KEY, MAP_WIDTH, MAP_HEIGHT, TILE_DEMOLISH_DEFS } from '../entities/constants';
 
 export function saveGame(state: GameState): void {
   state.lastSaveTime = Date.now();
@@ -20,21 +20,58 @@ export function loadGame(): GameState | null {
 
 /** Patch old saves missing new fields */
 function migrateState(state: GameState): void {
+  // Tile migrations
   for (const row of state.tiles) {
     for (const tile of row) {
       if (tile.assignedCrop === undefined) {
         tile.assignedCrop = tile.type === 'soil' ? 'carrot' : null;
       }
+      if (tile.facilityId === undefined) tile.facilityId = null;
+      if (tile.markedForDemolish === undefined) tile.markedForDemolish = false;
+      // Rename old tile types BEFORE setting durability
+      if ((tile.type as string) === 'tree') tile.type = 'wood';
+      if ((tile.type as string) === 'blocked') tile.type = 'stone';
+      const demDef = TILE_DEMOLISH_DEFS[tile.type];
+      if (tile.durability === undefined || (demDef && tile.durability === 0)) {
+        tile.durability = demDef?.maxDurability ?? 0;
+      }
     }
   }
+
   if (!state.upgrades) {
-    state.upgrades = { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0 };
+    state.upgrades = { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0 };
   }
+  if ((state.upgrades as any).demolishSpeed === undefined) {
+    (state.upgrades as any).demolishSpeed = 0;
+  }
+
   if (!state.orders) state.orders = [];
   if (state.orderRefreshTimer === undefined) state.orderRefreshTimer = 0;
   if (!state.nextOrderId) state.nextOrderId = 1;
 
-  // Expand map if saved size is smaller than current MAP_WIDTH/HEIGHT
+  const res = state.resources as any;
+  if (res.crops && !res.items) {
+    res.items = res.crops;
+    delete res.crops;
+  }
+  if (!state.resources.items) state.resources.items = {};
+
+  // Purchased blocks
+  if (!state.purchasedBlocks) state.purchasedBlocks = [{ x: 0, y: 0 }];
+
+  if (!state.facilities) state.facilities = [];
+  if (!state.nextFacilityId) state.nextFacilityId = 1;
+  for (const fac of state.facilities) {
+    if (fac.animalCount === undefined) fac.animalCount = 0;
+  }
+
+  for (const w of state.workers) {
+    if (w.carryingItem === undefined) w.carryingItem = null;
+  }
+
+  if (!state.unlockedCrops) state.unlockedCrops = ['carrot', 'wheat', 'tomato'];
+
+  // Expand map
   const oldH = state.tiles.length;
   const oldW = state.tiles[0]?.length ?? 0;
   if (oldH < MAP_HEIGHT || oldW < MAP_WIDTH) {
@@ -46,8 +83,7 @@ function migrateState(state: GameState): void {
         if (existing) {
           row.push(existing);
         } else {
-          const isEdge = x === 0 || x === MAP_WIDTH - 1 || y === 0 || y === MAP_HEIGHT - 1;
-          row.push({ x, y, type: isEdge ? 'tree' : 'grass', cropId: null, assignedCrop: null });
+          row.push({ x, y, type: 'grass' as TileType, cropId: null, assignedCrop: null, facilityId: null, durability: 0, markedForDemolish: false });
         }
       }
       newTiles.push(row);

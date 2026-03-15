@@ -1,17 +1,18 @@
 import type { Crop, CropType, GameState } from '../entities/types';
 import { CROP_DEFS } from '../entities/cropDefs';
 import { getUpgradeMultiplier } from './UpgradeSystem';
+import { hasStorageSpace } from './FacilitySystem';
 
 export function updateCrops(state: GameState, dt: number): void {
   const growthMult = getUpgradeMultiplier(state, 'growthSpeed');
   const maintMult = getUpgradeMultiplier(state, 'maintenanceInterval');
   const autoHarvest = state.upgrades.autoHarvest > 0;
 
-  // Auto-harvest ready crops
+  // Auto-harvest ready crops (only if warehouse has space)
   if (autoHarvest) {
     for (let i = state.crops.length - 1; i >= 0; i--) {
       const crop = state.crops[i]!;
-      if (crop.stage === 'ready') harvestCrop(state, crop);
+      if (crop.stage === 'ready' && hasStorageSpace(state)) harvestCrop(state, crop);
     }
   }
 
@@ -78,14 +79,14 @@ export function plantCrop(state: GameState, tileX: number, tileY: number, type: 
   return crop;
 }
 
+/** Remove crop from map and add to inventory (used by auto-harvest) */
 export function harvestCrop(state: GameState, crop: Crop): void {
-  const def = CROP_DEFS[crop.type];
-  if (!def) return;
+  state.resources.items[crop.type] = (state.resources.items[crop.type] ?? 0) + 1;
+  removeCrop(state, crop);
+}
 
-  // Add to inventory
-  state.resources.crops[crop.type] = (state.resources.crops[crop.type] ?? 0) + 1;
-
-  // Remove crop
+/** Remove crop from map without adding to inventory (worker carries it) */
+export function removeCrop(state: GameState, crop: Crop): void {
   const tile = state.tiles[crop.tileY]?.[crop.tileX];
   if (tile) tile.cropId = null;
   const idx = state.crops.indexOf(crop);

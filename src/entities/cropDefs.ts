@@ -3,25 +3,97 @@ import type { CropDef, CropType } from './types';
 export const CROP_DEFS: Record<CropType, CropDef> = {
   carrot: {
     type: 'carrot',
-    growTime: 10_000,       // 10s per stage
-    waterInterval: 8_000,
-    weedInterval: 12_000,
+    growTime: 50_000,
+    waterInterval: 40_000,
+    weedInterval: 60_000,
     sellPrice: 5,
+    unlockCost: 0,
+    requires: [],
   },
   wheat: {
     type: 'wheat',
-    growTime: 6_000,        // faster growth
-    waterInterval: 10_000,  // less needy
-    weedInterval: 8_000,
-    sellPrice: 3,           // cheaper
+    growTime: 30_000,
+    waterInterval: 50_000,
+    weedInterval: 40_000,
+    sellPrice: 3,
+    unlockCost: 0,
+    requires: [],
   },
   tomato: {
     type: 'tomato',
-    growTime: 18_000,       // slow growth
-    waterInterval: 6_000,   // thirsty
-    weedInterval: 15_000,
-    sellPrice: 12,          // expensive
+    growTime: 90_000,
+    waterInterval: 30_000,
+    weedInterval: 75_000,
+    sellPrice: 12,
+    unlockCost: 30,
+    requires: ['carrot'],
+  },
+  potato: {
+    type: 'potato',
+    growTime: 60_000,
+    waterInterval: 70_000,
+    weedInterval: 50_000,
+    sellPrice: 7,
+    unlockCost: 80,
+    requires: ['wheat'],
+  },
+  strawberry: {
+    type: 'strawberry',
+    growTime: 70_000,
+    waterInterval: 25_000,
+    weedInterval: 50_000,
+    sellPrice: 15,
+    unlockCost: 200,
+    requires: ['tomato'],
+  },
+  corn: {
+    type: 'corn',
+    growTime: 40_000,
+    waterInterval: 45_000,
+    weedInterval: 35_000,
+    sellPrice: 6,
+    unlockCost: 150,
+    requires: ['potato'],
+  },
+  pumpkin: {
+    type: 'pumpkin',
+    growTime: 125_000,
+    waterInterval: 60_000,
+    weedInterval: 100_000,
+    sellPrice: 22,
+    unlockCost: 500,
+    requires: ['corn'],
+  },
+  sunflower: {
+    type: 'sunflower',
+    growTime: 80_000,
+    waterInterval: 40_000,
+    weedInterval: 90_000,
+    sellPrice: 18,
+    unlockCost: 800,
+    requires: ['tomato', 'potato'],
+  },
+  grape: {
+    type: 'grape',
+    growTime: 175_000,
+    waterInterval: 20_000,
+    weedInterval: 125_000,
+    sellPrice: 40,
+    unlockCost: 1500,
+    requires: ['strawberry'],
+  },
+  coffee: {
+    type: 'coffee',
+    growTime: 225_000,
+    waterInterval: 15_000,
+    weedInterval: 150_000,
+    sellPrice: 60,
+    unlockCost: 2500,
+    requires: ['sunflower'],
   },
 };
 
-export const CROP_TYPES: CropType[] = ['carrot', 'wheat', 'tomato'];
+export const CROP_TYPES: CropType[] = [
+  'carrot', 'wheat', 'tomato', 'potato', 'strawberry',
+  'corn', 'pumpkin', 'sunflower', 'grape', 'coffee',
+];
