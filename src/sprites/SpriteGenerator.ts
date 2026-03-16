@@ -108,6 +108,7 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   add('tb_demolish', emoji(24, 24, '🔨', undefined, 18));
   add('tb_gather_wood', emoji(24, 24, '🪓', undefined, 18));
   add('tb_gather_stone', emoji(24, 24, '⛏️', undefined, 18));
+  add('tb_worker', emoji(24, 24, '🧑‍🌾', undefined, 18));
   add('tb_sell', emoji(24, 24, '💰', undefined, 18));
   add('tb_upgrade', emoji(24, 24, '⬆️', undefined, 18));
   add('tb_crops', emoji(24, 24, '🌾', undefined, 18));
@@ -131,7 +132,11 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   add('icon_oven', emoji(12, 12, '🔥', undefined, 10));
   add('icon_cooking_pot', emoji(12, 12, '🍲', undefined, 10));
 
-  // Product icons (12x12)
+  // Non-crop item icons (12x12)
+  add('icon_egg', emoji(12, 12, '🥚', undefined, 10));
+  add('icon_milk', emoji(12, 12, '🥛', undefined, 10));
+  add('icon_wood', emoji(12, 12, '🪵', undefined, 10));
+  add('icon_stone', emoji(12, 12, '🪨', undefined, 10));
   add('icon_flour', emoji(12, 12, '🌾', undefined, 10));
   add('icon_juice', emoji(12, 12, '🧃', undefined, 10));
   add('icon_bread', emoji(12, 12, '🍞', undefined, 10));

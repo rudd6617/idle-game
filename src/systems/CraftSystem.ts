@@ -1,17 +1,18 @@
 import type { GameState } from '../entities/types';
 import { WORKER_CRAFT_COST, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from '../entities/constants';
 
+export function getWorkerCost(state: GameState): number {
+  return WORKER_CRAFT_COST.money * Math.pow(2, state.workers.length);
+}
+
 export function canCraftWorker(state: GameState): boolean {
-  const { money, items } = state.resources;
-  return money >= WORKER_CRAFT_COST.money
-    && (items.carrot ?? 0) >= WORKER_CRAFT_COST.carrots;
+  return state.resources.money >= getWorkerCost(state);
 }
 
 export function craftWorker(state: GameState): boolean {
   if (!canCraftWorker(state)) return false;
 
-  state.resources.money -= WORKER_CRAFT_COST.money;
-  state.resources.items.carrot = (state.resources.items.carrot ?? 0) - WORKER_CRAFT_COST.carrots;
+  state.resources.money -= getWorkerCost(state);
 
   // Spawn near center
   state.workers.push({

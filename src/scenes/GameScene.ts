@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { CropType, FacilityType, GameState, UpgradeType } from '../entities/types';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, BUILDING_TYPES, MACHINE_TYPES, ITEM_SELL_PRICES, NON_CROP_ITEMS } from '../entities/constants';
+import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, BUILDING_TYPES, MACHINE_TYPES, ITEM_SELL_PRICES, NON_CROP_ITEMS } from '../entities/constants';
 import { CROP_TYPES, CROP_DEFS } from '../entities/cropDefs';
 import { createInitialState } from '../systems/StateFactory';
 import { loadGame, saveGame, getOfflineTime } from '../systems/SaveSystem';
@@ -8,7 +8,7 @@ import { updateCrops } from '../systems/CropSystem';
 import { updateWorkers } from '../systems/WorkerSystem';
 import { updateFacilities, canBuildFacility, buildFacility, buyAnimal, getWarehouseCapacity, getCurrentStorage } from '../systems/FacilitySystem';
 import { sellCrop, sellItem } from '../systems/EconomySystem';
-import { canCraftWorker, craftWorker } from '../systems/CraftSystem';
+import { canCraftWorker, craftWorker, getWorkerCost } from '../systems/CraftSystem';
 import { canUpgrade, applyUpgrade, getUpgradeCost, getUpgradeMultiplier } from '../systems/UpgradeSystem';
 import { updateOrders, canFulfillOrder, fulfillOrder } from '../systems/OrderSystem';
 import { isCropUnlocked, canUnlockCrop, unlockCrop } from '../systems/CropUnlockSystem';
@@ -39,7 +39,9 @@ export class GameScene extends Phaser.Scene {
   private cropImages: Map<number, Phaser.GameObjects.Image> = new Map();
   private cropWaterIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private cropWeedIcons: Map<number, Phaser.GameObjects.Image> = new Map();
+  private cropReadyIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private workerImages: Phaser.GameObjects.Image[] = [];
+  private workerCarryIcons: Phaser.GameObjects.Image[] = [];
   private indicatorImages: Map<string, Phaser.GameObjects.Image> = new Map();
   private facilityImages: Map<number, Phaser.GameObjects.Image> = new Map();
   private demolishOverlay!: Phaser.GameObjects.Graphics;
@@ -63,7 +65,6 @@ export class GameScene extends Phaser.Scene {
   private modeText!: Phaser.GameObjects.Text;
   private activePanel: PanelType = null;
   private panelBg!: Phaser.GameObjects.Graphics;
-  private panelElements: Phaser.GameObjects.GameObject[] = [];
   // Panel content — pre-created, toggled visibility
   private sellTexts: Phaser.GameObjects.Text[] = [];
   private itemSellTexts: Phaser.GameObjects.Text[] = [];
@@ -110,8 +111,9 @@ export class GameScene extends Phaser.Scene {
     this.placementPreview = this.add.graphics().setDepth(20);
     this.demolishOverlay = this.add.graphics().setDepth(9);
 
-    // Camera
-    this.cameras.main.setBounds(0, 0, MAP_PX_W, MAP_PX_H);
+    // Camera — bounds padded so map doesn't hide behind HUD/toolbar
+    this.cameras.main.setBounds(0, -HUD_H, MAP_PX_W, MAP_PX_H + HUD_H + TOOLBAR_H);
+    this.cameras.main.scrollY = -HUD_H;
 
     this.wasdKeys = this.input.keyboard!.addKeys('W,A,S,D') as any;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -211,12 +213,15 @@ export class GameScene extends Phaser.Scene {
       this.toolbarButtons.push(btn);
     });
 
-    // Worker button in toolbar
-    const workerBtn = this.add.text(20 + tools.length * 36, tbY + 6, '', { fontSize: '10px', color: '#4ade80', fontFamily: 'monospace' })
-      .setScrollFactor(0).setDepth(51).setInteractive({ useHandCursor: true });
-    workerBtn.on('pointerdown', () => { craftWorker(this.state); });
-    this.panelElements.push(workerBtn); // reuse for dynamic update
-    (this as any)._workerBtn = workerBtn;
+    // Worker button in toolbar (icon + cost label)
+    const wbX = 20 + tools.length * 36;
+    const workerIcon = this.add.image(wbX, tbY + 20, 'tb_worker')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
+      .setInteractive({ useHandCursor: true });
+    workerIcon.on('pointerdown', () => { craftWorker(this.state); });
+    const workerLabel = this.add.text(wbX + 16, tbY + 6, '', { fontSize: '9px', color: '#4ade80', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51);
+    (this as any)._workerLabel = workerLabel;
 
     // Panel background (hidden initially)
     this.panelBg = this.add.graphics().setScrollFactor(0).setDepth(48).setVisible(false);
@@ -561,9 +566,24 @@ export class GameScene extends Phaser.Scene {
       let we = this.cropWeedIcons.get(crop.id);
       if (!we) { we = this.add.image(0, 0, 'icon_weed').setDepth(8); this.cropWeedIcons.set(crop.id, we); }
       we.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 10, crop.tileY * TILE_SIZE + 10).setVisible(crop.needsWeeding);
+
+      // Ready icon — floating item for pickup
+      if (crop.stage === 'ready') {
+        let ri = this.cropReadyIcons.get(crop.id);
+        if (!ri) { ri = this.add.image(0, 0, `icon_${crop.type}`).setDepth(12); this.cropReadyIcons.set(crop.id, ri); }
+        ri.setTexture(`icon_${crop.type}`).setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 8, crop.tileY * TILE_SIZE + TILE_SIZE - 8).setDisplaySize(12, 12).setVisible(true);
+      } else {
+        const ri = this.cropReadyIcons.get(crop.id);
+        if (ri) { ri.setVisible(false); }
+      }
     }
     for (const [id, img] of this.cropImages) {
-      if (!activeIds.has(id)) { img.destroy(); this.cropImages.delete(id); this.cropWaterIcons.get(id)?.destroy(); this.cropWaterIcons.delete(id); this.cropWeedIcons.get(id)?.destroy(); this.cropWeedIcons.delete(id); }
+      if (!activeIds.has(id)) {
+        img.destroy(); this.cropImages.delete(id);
+        this.cropWaterIcons.get(id)?.destroy(); this.cropWaterIcons.delete(id);
+        this.cropWeedIcons.get(id)?.destroy(); this.cropWeedIcons.delete(id);
+        this.cropReadyIcons.get(id)?.destroy(); this.cropReadyIcons.delete(id);
+      }
     }
   }
 
@@ -581,19 +601,38 @@ export class GameScene extends Phaser.Scene {
   }
 
   private syncWorkers(): void {
-    while (this.workerImages.length < this.state.workers.length) { this.workerImages.push(this.add.image(0, 0, 'worker_idle').setDepth(15)); }
+    while (this.workerImages.length < this.state.workers.length) {
+      this.workerImages.push(this.add.image(0, 0, 'worker_idle').setDepth(15));
+      this.workerCarryIcons.push(this.add.image(0, 0, 'icon_fallow').setDepth(16).setVisible(false));
+    }
     for (let i = 0; i < this.state.workers.length; i++) {
       const w = this.state.workers[i]!;
       this.workerImages[i]!.setTexture(w.state === 'working' ? 'worker_working' : 'worker_idle').setPosition(w.x, w.y).setDisplaySize(16, 16).setVisible(true);
+      // Show carried item icon above worker
+      const carried = Object.entries(w.carryingItems).find(([, v]) => (v ?? 0) > 0);
+      const icon = this.workerCarryIcons[i]!;
+      if (carried) {
+        icon.setTexture(`icon_${carried[0]}`).setPosition(w.x, w.y - 12).setDisplaySize(10, 10).setVisible(true);
+      } else {
+        icon.setVisible(false);
+      }
     }
-    for (let i = this.state.workers.length; i < this.workerImages.length; i++) this.workerImages[i]!.setVisible(false);
+    for (let i = this.state.workers.length; i < this.workerImages.length; i++) {
+      this.workerImages[i]!.setVisible(false);
+      this.workerCarryIcons[i]!.setVisible(false);
+    }
   }
 
   private syncTileVisibility(): void {
     for (let y = 0; y < MAP_HEIGHT; y++) {
       for (let x = 0; x < MAP_WIDTH; x++) {
         const b = this.getBlockCoord(x, y);
-        this.tileImages[y]?.[x]?.setVisible(this.isBlockOwned(b.x, b.y));
+        const img = this.tileImages[y]?.[x];
+        if (!img) continue;
+        img.setVisible(this.isBlockOwned(b.x, b.y));
+        const tile = this.state.tiles[y]![x]!;
+        const texKey = getTileTextureKey(tile.type);
+        if (img.texture.key !== texKey) { img.setTexture(texKey); img.setDisplaySize(TILE_SIZE - 1, TILE_SIZE - 1); }
       }
     }
     // Lock icons
@@ -654,11 +693,11 @@ export class GameScene extends Phaser.Scene {
     const cap = getWarehouseCapacity(this.state);
     this.hudText.setText(`$${money}  Storage:${stored}/${cap}  W:${this.state.workers.length}  G:${this.state.crops.length}`);
 
-    // Worker button
-    const wb = (this as any)._workerBtn as Phaser.GameObjects.Text;
+    // Worker button label
+    const wl = (this as any)._workerLabel as Phaser.GameObjects.Text;
     const canCraft = canCraftWorker(this.state);
-    wb.setText(`+W $${WORKER_CRAFT_COST.money}`);
-    wb.setColor(canCraft ? '#4ade80' : '#555555');
+    wl.setText(`$${getWorkerCost(this.state)}`);
+    wl.setColor(canCraft ? '#4ade80' : '#555555');
 
     // Mode hint
     let hint = '';
