@@ -3,6 +3,7 @@ import { FACILITY_DEFS, isMachine } from '../entities/constants';
 
 export function updateFacilities(state: GameState, dt: number): void {
   for (const fac of state.facilities) {
+    if (fac.type === 'auto_seeder') continue; // handled by AutoSeederSystem
     const def = FACILITY_DEFS[fac.type];
     const isMach = isMachine(def);
 
@@ -63,6 +64,7 @@ export function buildFacility(state: GameState, type: FacilityType, ox: number, 
     productionTimer: def.productionTime,
     inputBuffer: {},
     outputBuffer: {},
+    seedCrop: null,
   };
 
   state.facilities.push(fac);

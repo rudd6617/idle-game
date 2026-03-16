@@ -48,7 +48,7 @@ export type ItemType = CropType | 'egg' | 'milk' | 'wood' | 'stone' | 'flour' | 
 
 // === Facility ===
 
-export type FacilityType = 'chicken_coop' | 'cow_barn' | 'warehouse' | 'windmill' | 'juicer' | 'oven' | 'cooking_pot';
+export type FacilityType = 'chicken_coop' | 'cow_barn' | 'warehouse' | 'windmill' | 'juicer' | 'oven' | 'cooking_pot' | 'auto_seeder';
 
 export interface Facility {
   id: number;
@@ -61,6 +61,7 @@ export interface Facility {
   productionTimer: number;
   inputBuffer: Partial<Record<ItemType, number>>;
   outputBuffer: Partial<Record<ItemType, number>>;
+  seedCrop: CropType | null;
 }
 
 // === Worker ===

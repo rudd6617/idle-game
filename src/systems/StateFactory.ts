@@ -77,7 +77,7 @@ export function createInitialState(): GameState {
       },
     ],
     facilities: [
-      { id: whId, type: 'warehouse', originX: 1, originY: 1, width: 1, height: 1, animalCount: 0, productionTimer: 0, inputBuffer: {}, outputBuffer: {} },
+      { id: whId, type: 'warehouse', originX: 1, originY: 1, width: 1, height: 1, animalCount: 0, productionTimer: 0, inputBuffer: {}, outputBuffer: {}, seedCrop: null },
     ],
     purchasedBlocks: [{ x: 0, y: 0 }],
     resources: { money: 200, items: {} },

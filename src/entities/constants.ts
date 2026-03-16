@@ -165,11 +165,25 @@ export const FACILITY_DEFS: Record<FacilityType, FacilityDef> = {
     outputPerAnimal: { pizza: 1 },
     productionTime: 40_000,
   },
+  auto_seeder: {
+    type: 'auto_seeder',
+    label: 'Auto-Seeder',
+    animalName: '',
+    width: 1,
+    height: 1,
+    cost: 150,
+    animalCost: 0,
+    maxAnimals: 0,
+    capacity: 0,
+    inputPerAnimal: {},
+    outputPerAnimal: {},
+    productionTime: 3_000,
+  },
 };
 
-export const FACILITY_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn', 'windmill', 'juicer', 'oven', 'cooking_pot'];
+export const FACILITY_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn', 'windmill', 'juicer', 'oven', 'cooking_pot', 'auto_seeder'];
 export const BUILDING_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn'];
-export const MACHINE_TYPES: FacilityType[] = ['windmill', 'juicer', 'oven', 'cooking_pot'];
+export const MACHINE_TYPES: FacilityType[] = ['windmill', 'juicer', 'oven', 'cooking_pot', 'auto_seeder'];
 
 // Non-crop items (used in sell panel + economy)
 export const NON_CROP_ITEMS: ItemType[] = ['wood', 'stone', 'egg', 'milk', 'flour', 'juice', 'bread', 'pizza'];

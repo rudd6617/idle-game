@@ -122,6 +122,7 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   add('facility_juicer', emoji(T, T, '🧃', '#8b7355'));
   add('facility_oven', emoji(2 * T, 2 * T, '🔥', '#8b4513', 50));
   add('facility_cooking_pot', emoji(2 * T, 2 * T, '🍲', '#777777', 50));
+  add('facility_auto_seeder', emoji(T, T, '🌱', '#556b55'));
 
   // Mini facility icons (12x12)
   add('icon_warehouse', emoji(12, 12, '🏠', undefined, 10));
@@ -131,6 +132,7 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   add('icon_juicer', emoji(12, 12, '🧃', undefined, 10));
   add('icon_oven', emoji(12, 12, '🔥', undefined, 10));
   add('icon_cooking_pot', emoji(12, 12, '🍲', undefined, 10));
+  add('icon_auto_seeder', emoji(12, 12, '🌱', undefined, 10));
 
   // Non-crop item icons (12x12)
   add('icon_egg', emoji(12, 12, '🥚', undefined, 10));

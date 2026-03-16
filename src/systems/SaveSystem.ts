@@ -66,6 +66,7 @@ function migrateState(state: GameState): void {
   if (!state.nextFacilityId) state.nextFacilityId = 1;
   for (const fac of state.facilities) {
     if (fac.animalCount === undefined) fac.animalCount = 0;
+    if ((fac as any).seedCrop === undefined) fac.seedCrop = null;
   }
 
   for (const w of state.workers) {

@@ -11,6 +11,7 @@ import { sellCrop, sellItem } from '../systems/EconomySystem';
 import { canCraftWorker, craftWorker, getWorkerCost } from '../systems/CraftSystem';
 import { canUpgrade, applyUpgrade, getUpgradeCost, getUpgradeMultiplier } from '../systems/UpgradeSystem';
 import { updateOrders, canFulfillOrder, fulfillOrder } from '../systems/OrderSystem';
+import { updateAutoSeeders } from '../systems/AutoSeederSystem';
 import { isCropUnlocked, canUnlockCrop, unlockCrop } from '../systems/CropUnlockSystem';
 import { generateAllSprites, getCropTextureKey, getTileTextureKey } from '../sprites/SpriteGenerator';
 
@@ -44,6 +45,7 @@ export class GameScene extends Phaser.Scene {
   private workerCarryIcons: Phaser.GameObjects.Image[] = [];
   private indicatorImages: Map<string, Phaser.GameObjects.Image> = new Map();
   private facilityImages: Map<number, Phaser.GameObjects.Image> = new Map();
+  private seederCropIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private demolishOverlay!: Phaser.GameObjects.Graphics;
   private lockImages: Map<string, Phaser.GameObjects.Image> = new Map();
 
@@ -348,6 +350,7 @@ export class GameScene extends Phaser.Scene {
     updateCrops(this.state, delta);
     updateWorkers(this.state, delta);
     updateFacilities(this.state, delta);
+    updateAutoSeeders(this.state, delta);
     updateOrders(this.state, delta);
 
     this.saveTimer += delta;
@@ -464,8 +467,12 @@ export class GameScene extends Phaser.Scene {
     if (tile.facilityId !== null) {
       const fac = this.state.facilities.find(f => f.id === tile.facilityId);
       if (fac) {
-        const def = FACILITY_DEFS[fac.type];
-        if (def.maxAnimals > 0) buyAnimal(this.state, fac);
+        if (fac.type === 'auto_seeder') {
+          fac.seedCrop = this.nextCropInCycle(fac.seedCrop ?? null);
+        } else {
+          const def = FACILITY_DEFS[fac.type];
+          if (def.maxAnimals > 0) buyAnimal(this.state, fac);
+        }
       }
       return;
     }
@@ -473,13 +480,17 @@ export class GameScene extends Phaser.Scene {
       if (tile.assignedCrop === null && tile.cropId === null) {
         tile.type = 'grass'; tile.durability = 0; this.updateTileImage(tx, ty);
       } else {
-        const cycle: (CropType | null)[] = [...this.state.unlockedCrops, null];
-        const idx = cycle.indexOf(tile.assignedCrop);
-        tile.assignedCrop = cycle[(idx + 1) % cycle.length] ?? null;
+        tile.assignedCrop = this.nextCropInCycle(tile.assignedCrop);
       }
       return;
     }
     if (tile.durability > 0) { tile.markedForDemolish = !tile.markedForDemolish; }
+  }
+
+  private nextCropInCycle(current: CropType | null): CropType | null {
+    const cycle: (CropType | null)[] = [...this.state.unlockedCrops, null];
+    const idx = cycle.indexOf(current);
+    return cycle[(idx + 1) % cycle.length] ?? null;
   }
 
   private demolishFacility(facilityId: number): void {
@@ -544,6 +555,7 @@ export class GameScene extends Phaser.Scene {
       updateCrops(this.state, dt);
       updateWorkers(this.state, dt);
       updateFacilities(this.state, dt);
+      updateAutoSeeders(this.state, dt);
       updateOrders(this.state, dt);
     }
   }
@@ -596,8 +608,17 @@ export class GameScene extends Phaser.Scene {
       let img = this.facilityImages.get(fac.id);
       if (!img) { img = this.add.image(0, 0, key).setDepth(3); this.facilityImages.set(fac.id, img); }
       img.setTexture(key).setPosition(fac.originX * TILE_SIZE + pw / 2, fac.originY * TILE_SIZE + ph / 2).setDisplaySize(pw - 2, ph - 2).setVisible(true);
+
+      // Auto-seeder crop icon overlay
+      if (fac.type === 'auto_seeder') {
+        const texKey = fac.seedCrop ? `icon_${fac.seedCrop}` : 'icon_fallow';
+        let icon = this.seederCropIcons.get(fac.id);
+        if (!icon) { icon = this.add.image(0, 0, texKey).setDepth(10); this.seederCropIcons.set(fac.id, icon); }
+        icon.setTexture(texKey).setPosition(fac.originX * TILE_SIZE + 7, fac.originY * TILE_SIZE + 7).setVisible(true);
+      }
     }
     for (const [id, img] of this.facilityImages) { if (!activeIds.has(id)) { img.destroy(); this.facilityImages.delete(id); } }
+    for (const [id, icon] of this.seederCropIcons) { if (!activeIds.has(id)) { icon.destroy(); this.seederCropIcons.delete(id); } }
   }
 
   private syncWorkers(): void {
