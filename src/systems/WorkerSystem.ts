@@ -1,5 +1,5 @@
 import type { GameState, Task, Worker, Crop, Facility } from '../entities/types';
-import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS, BASE_CARRY_CAPACITY } from '../entities/constants';
+import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS, BASE_CARRY_CAPACITY, isMachine } from '../entities/constants';
 import { CROP_DEFS } from '../entities/cropDefs';
 import { plantCrop, removeCrop } from './CropSystem';
 import { needsFeeding, needsCollection, hasStorageSpace, getWarehouseCapacity, getCurrentStorage } from './FacilitySystem';
@@ -134,7 +134,7 @@ function findFeedTask(state: GameState, claimed: Set<string>): Task | null {
   const fac = state.facilities.find(f => {
     if (!needsFeeding(f)) return false;
     if (!isFree(claimed, f.originX, f.originY)) return false;
-    // Check if player has enough items for at least 1 animal
+    // Check if player has enough items for at least 1 batch
     const def = FACILITY_DEFS[f.type];
     return Object.entries(def.inputPerAnimal).every(
       ([item, perAnimal]) => (state.resources.items[item as keyof typeof state.resources.items] ?? 0) >= perAnimal!,
@@ -274,10 +274,12 @@ function executeTask(state: GameState, worker: Worker, task: Task): void {
     }
     case 'feed': {
       const fac = findFacilityAt(state, task.targetX, task.targetY);
-      if (!fac || fac.animalCount === 0) break;
+      if (!fac) break;
       const def = FACILITY_DEFS[fac.type];
-      // Feed as many animals as inventory allows
-      let canFeed = fac.animalCount;
+      const isMach = isMachine(def);
+      if (!isMach && fac.animalCount === 0) break;
+      // Machines: feed 1 batch; Animals: feed up to animalCount
+      let canFeed = isMach ? 1 : fac.animalCount;
       for (const [item, perAnimal] of Object.entries(def.inputPerAnimal)) {
         const available = state.resources.items[item as keyof typeof state.resources.items] ?? 0;
         canFeed = Math.min(canFeed, Math.floor(available / perAnimal!));

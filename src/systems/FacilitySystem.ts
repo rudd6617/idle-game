@@ -1,32 +1,29 @@
 import type { Facility, FacilityType, GameState, ItemType } from '../entities/types';
-import { FACILITY_DEFS } from '../entities/constants';
+import { FACILITY_DEFS, isMachine } from '../entities/constants';
 
 export function updateFacilities(state: GameState, dt: number): void {
   for (const fac of state.facilities) {
-    if (fac.animalCount === 0) continue;
-
     const def = FACILITY_DEFS[fac.type];
+    const isMach = isMachine(def);
 
-    // How many animals can be fed with current inputBuffer?
-    let feedable = fac.animalCount;
-    for (const [item, perAnimal] of Object.entries(def.inputPerAnimal)) {
+    // Compute how many batches can run
+    let batches = isMach ? 1 : fac.animalCount;
+    if (batches === 0) continue;
+    for (const [item, perBatch] of Object.entries(def.inputPerAnimal)) {
       const available = fac.inputBuffer[item as ItemType] ?? 0;
-      feedable = Math.min(feedable, Math.floor(available / perAnimal!));
+      batches = Math.min(batches, Math.floor(available / perBatch!));
     }
-    if (feedable === 0) continue;
+    if (batches === 0) continue;
 
-    // Tick production
     fac.productionTimer -= dt;
     if (fac.productionTimer <= 0) {
-      // Consume input × feedable
-      for (const [item, perAnimal] of Object.entries(def.inputPerAnimal)) {
+      for (const [item, perBatch] of Object.entries(def.inputPerAnimal)) {
         const key = item as ItemType;
-        fac.inputBuffer[key] = (fac.inputBuffer[key] ?? 0) - perAnimal! * feedable;
+        fac.inputBuffer[key] = (fac.inputBuffer[key] ?? 0) - perBatch! * batches;
       }
-      // Produce output × feedable
-      for (const [item, perAnimal] of Object.entries(def.outputPerAnimal)) {
+      for (const [item, perBatch] of Object.entries(def.outputPerAnimal)) {
         const key = item as ItemType;
-        fac.outputBuffer[key] = (fac.outputBuffer[key] ?? 0) + perAnimal! * feedable;
+        fac.outputBuffer[key] = (fac.outputBuffer[key] ?? 0) + perBatch! * batches;
       }
       fac.productionTimer = def.productionTime;
     }
@@ -107,10 +104,11 @@ export function hasStorageSpace(state: GameState, amount = 1): boolean {
 }
 
 export function needsFeeding(fac: Facility): boolean {
-  if (fac.animalCount === 0) return false;
   const def = FACILITY_DEFS[fac.type];
+  const demand = isMachine(def) ? 1 : fac.animalCount;
+  if (demand === 0) return false;
   return Object.entries(def.inputPerAnimal).some(
-    ([item, perAnimal]) => (fac.inputBuffer[item as ItemType] ?? 0) < perAnimal! * fac.animalCount,
+    ([item, perBatch]) => (fac.inputBuffer[item as ItemType] ?? 0) < perBatch! * demand,
   );
 }
 

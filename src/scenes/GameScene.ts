@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { CropType, FacilityType, GameState, UpgradeType } from '../entities/types';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, ITEM_SELL_PRICES } from '../entities/constants';
+import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, WORKER_CRAFT_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, BUILDING_TYPES, MACHINE_TYPES, ITEM_SELL_PRICES, NON_CROP_ITEMS } from '../entities/constants';
 import { CROP_TYPES, CROP_DEFS } from '../entities/cropDefs';
 import { createInitialState } from '../systems/StateFactory';
 import { loadGame, saveGame, getOfflineTime } from '../systems/SaveSystem';
@@ -20,7 +20,8 @@ const MAP_PX_H = MAP_HEIGHT * TILE_SIZE;
 const HUD_H = 22;
 const TOOLBAR_H = 40;
 const CANVAS_H = VIEWPORT_W + HUD_H + TOOLBAR_H;
-const PANEL_H = 160;
+const PANEL_H = 280;
+const SUB_BAR_H = 36;
 
 const FONT_SM = { fontSize: '11px', color: '#999999', fontFamily: 'monospace' } as const;
 const FONT_MD = { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' } as const;
@@ -71,6 +72,9 @@ export class GameScene extends Phaser.Scene {
   private orderTexts: Phaser.GameObjects.Text[] = [];
   private orderClaimTexts: Phaser.GameObjects.Text[] = [];
   private toolbarButtons: Phaser.GameObjects.Image[] = [];
+  private activeGroup: 'buildings' | 'machines' | null = null;
+  private subBarBg!: Phaser.GameObjects.Graphics;
+  private subBarItems: Array<{ img: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text; group: string }> = [];
 
   constructor() {
     super('GameScene');
@@ -146,12 +150,11 @@ export class GameScene extends Phaser.Scene {
     this.modeText = this.add.text(VIEWPORT_W / 2, tbY - 14, '', { fontSize: '10px', color: '#facc15', fontFamily: 'monospace' })
       .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0.5);
 
-    // Tool buttons (left side)
+    // Tool buttons (left side) — grouped
     const tools: Array<{ key: string; action: () => void }> = [
       { key: 'tb_farm', action: () => { this.clearModes(); this.placingFarmland = true; } },
-      { key: 'icon_warehouse', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.warehouse.cost) this.placingFacility = 'warehouse'; } },
-      { key: 'icon_chicken_coop', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.chicken_coop.cost) this.placingFacility = 'chicken_coop'; } },
-      { key: 'icon_cow_barn', action: () => { this.clearModes(); if (this.state.resources.money >= FACILITY_DEFS.cow_barn.cost) this.placingFacility = 'cow_barn'; } },
+      { key: 'tb_build', action: () => this.toggleGroup('buildings') },
+      { key: 'tb_machine', action: () => this.toggleGroup('machines') },
       { key: 'tb_demolish', action: () => { this.clearModes(); this.demolishMode = true; } },
       { key: 'tb_gather_wood', action: () => { this.clearModes(); this.gatherMode = 'wood'; } },
       { key: 'tb_gather_stone', action: () => { this.clearModes(); this.gatherMode = 'stone'; } },
@@ -164,6 +167,30 @@ export class GameScene extends Phaser.Scene {
       btn.on('pointerdown', t.action);
       this.toolbarButtons.push(btn);
     });
+
+    // Sub-bar for facility groups
+    this.subBarBg = this.add.graphics().setScrollFactor(0).setDepth(52).setVisible(false);
+    const subBarGroups: Array<{ group: 'buildings' | 'machines'; types: typeof BUILDING_TYPES }> = [
+      { group: 'buildings', types: BUILDING_TYPES },
+      { group: 'machines', types: MACHINE_TYPES },
+    ];
+    for (const { group, types } of subBarGroups) {
+      for (const type of types) {
+        const def = FACILITY_DEFS[type];
+        const img = this.add.image(0, 0, `icon_${type}`)
+          .setScrollFactor(0).setDepth(53).setDisplaySize(24, 24)
+          .setInteractive({ useHandCursor: true }).setVisible(false);
+        img.on('pointerdown', () => {
+          this.activeGroup = null;
+          this.refreshSubBar();
+          this.clearPlacementModes();
+          if (this.state.resources.money >= def.cost) this.placingFacility = type;
+        });
+        const label = this.add.text(0, 0, `$${def.cost}`, { fontSize: '9px', color: '#aaaaaa', fontFamily: 'monospace' })
+          .setScrollFactor(0).setDepth(53).setOrigin(0.5, 0).setVisible(false);
+        this.subBarItems.push({ img, label, group });
+      }
+    }
 
     // Panel buttons (right side)
     const panels: Array<{ key: string; panel: PanelType }> = [
@@ -185,7 +212,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     // Worker button in toolbar
-    const workerBtn = this.add.text(tools.length * 36 + 16, tbY + 6, '', { fontSize: '10px', color: '#4ade80', fontFamily: 'monospace' })
+    const workerBtn = this.add.text(20 + tools.length * 36, tbY + 6, '', { fontSize: '10px', color: '#4ade80', fontFamily: 'monospace' })
       .setScrollFactor(0).setDepth(51).setInteractive({ useHandCursor: true });
     workerBtn.on('pointerdown', () => { craftWorker(this.state); });
     this.panelElements.push(workerBtn); // reuse for dynamic update
@@ -223,7 +250,7 @@ export class GameScene extends Phaser.Scene {
       t.on('pointerdown', () => { sellCrop(this.state, type); });
       this.sellTexts.push(t);
     });
-    (['wood', 'stone', 'egg', 'milk'] as const).forEach((type) => {
+    NON_CROP_ITEMS.forEach((type) => {
       const t = this.add.text(0, 0, '', FONT_MD).setScrollFactor(0).setDepth(49)
         .setInteractive({ useHandCursor: true }).setVisible(false);
       t.on('pointerdown', () => { sellItem(this.state, type); });
@@ -331,11 +358,47 @@ export class GameScene extends Phaser.Scene {
 
   // === CLICK HANDLING ===
 
-  private clearModes(): void {
+  private clearPlacementModes(): void {
     this.placingFacility = null;
     this.placingFarmland = false;
     this.demolishMode = false;
     this.gatherMode = null;
+  }
+
+  private clearModes(): void {
+    this.clearPlacementModes();
+    if (this.activeGroup) { this.activeGroup = null; this.refreshSubBar(); }
+  }
+
+  private toggleGroup(group: 'buildings' | 'machines'): void {
+    this.clearPlacementModes();
+    this.activeGroup = this.activeGroup === group ? null : group;
+    this.refreshSubBar();
+  }
+
+  private refreshSubBar(): void {
+    const subBarY = CANVAS_H - TOOLBAR_H - SUB_BAR_H;
+    let idx = 0;
+    for (const it of this.subBarItems) {
+      if (it.group === this.activeGroup) {
+        const x = 30 + idx * 56;
+        it.img.setPosition(x, subBarY + 12).setVisible(true);
+        it.label.setPosition(x, subBarY + 26).setVisible(true);
+        idx++;
+      } else {
+        it.img.setVisible(false);
+        it.label.setVisible(false);
+      }
+    }
+    if (idx > 0) {
+      this.subBarBg.setVisible(true).clear();
+      this.subBarBg.fillStyle(0x111122, 0.92);
+      this.subBarBg.fillRect(0, subBarY, VIEWPORT_W, SUB_BAR_H);
+      this.subBarBg.lineStyle(1, 0x333333, 1);
+      this.subBarBg.lineBetween(0, subBarY, VIEWPORT_W, subBarY);
+    } else {
+      this.subBarBg.setVisible(false);
+    }
   }
 
   private getBlockCoord(tx: number, ty: number) {
@@ -350,6 +413,7 @@ export class GameScene extends Phaser.Scene {
 
   private handleTileClick(pointer: Phaser.Input.Pointer): void {
     if (pointer.rightButtonDown()) return;
+    if (this.activeGroup) { this.activeGroup = null; this.refreshSubBar(); return; }
 
     const worldX = pointer.x + this.cameras.main.scrollX;
     const worldY = pointer.y + this.cameras.main.scrollY;
@@ -394,7 +458,10 @@ export class GameScene extends Phaser.Scene {
     }
     if (tile.facilityId !== null) {
       const fac = this.state.facilities.find(f => f.id === tile.facilityId);
-      if (fac) buyAnimal(this.state, fac);
+      if (fac) {
+        const def = FACILITY_DEFS[fac.type];
+        if (def.maxAnimals > 0) buyAnimal(this.state, fac);
+      }
       return;
     }
     if (tile.type === 'soil') {
@@ -617,14 +684,10 @@ export class GameScene extends Phaser.Scene {
       this.sellTexts[i]!.setText(`${type} x${count} [$${CROP_DEFS[type].sellPrice}]`);
       this.sellTexts[i]!.setColor(count > 0 ? '#4ade80' : '#555555');
     });
-    const extras: Array<{ type: 'wood' | 'stone' | 'egg' | 'milk'; label: string }> = [
-      { type: 'wood', label: 'wood' }, { type: 'stone', label: 'stone' },
-      { type: 'egg', label: 'egg' }, { type: 'milk', label: 'milk' },
-    ];
-    extras.forEach(({ type, label }, i) => {
+    NON_CROP_ITEMS.forEach((type, i) => {
       const count = this.state.resources.items[type] ?? 0;
       const price = ITEM_SELL_PRICES[type] ?? 0;
-      this.itemSellTexts[i]!.setText(`${label} x${count} [$${price}]`);
+      this.itemSellTexts[i]!.setText(`${type} x${count} [$${price}]`);
       this.itemSellTexts[i]!.setColor(count > 0 ? '#4ade80' : '#555555');
     });
   }

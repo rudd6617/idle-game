@@ -109,9 +109,70 @@ export const FACILITY_DEFS: Record<FacilityType, FacilityDef> = {
     outputPerAnimal: { milk: 1 },
     productionTime: 45_000,
   },
+  windmill: {
+    type: 'windmill',
+    label: 'Windmill',
+    animalName: '',
+    width: 1,
+    height: 1,
+    cost: 80,
+    animalCost: 0,
+    maxAnimals: 0,
+    capacity: 0,
+    inputPerAnimal: { wheat: 3 },
+    outputPerAnimal: { flour: 1 },
+    productionTime: 20_000,
+  },
+  juicer: {
+    type: 'juicer',
+    label: 'Juicer',
+    animalName: '',
+    width: 1,
+    height: 1,
+    cost: 80,
+    animalCost: 0,
+    maxAnimals: 0,
+    capacity: 0,
+    inputPerAnimal: { carrot: 3 },
+    outputPerAnimal: { juice: 1 },
+    productionTime: 20_000,
+  },
+  oven: {
+    type: 'oven',
+    label: 'Oven',
+    animalName: '',
+    width: 2,
+    height: 2,
+    cost: 200,
+    animalCost: 0,
+    maxAnimals: 0,
+    capacity: 0,
+    inputPerAnimal: { flour: 2, egg: 1 },
+    outputPerAnimal: { bread: 1 },
+    productionTime: 30_000,
+  },
+  cooking_pot: {
+    type: 'cooking_pot',
+    label: 'Cooking Pot',
+    animalName: '',
+    width: 2,
+    height: 2,
+    cost: 300,
+    animalCost: 0,
+    maxAnimals: 0,
+    capacity: 0,
+    inputPerAnimal: { flour: 1, tomato: 2 },
+    outputPerAnimal: { pizza: 1 },
+    productionTime: 40_000,
+  },
 };
 
-export const FACILITY_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn'];
+export const FACILITY_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn', 'windmill', 'juicer', 'oven', 'cooking_pot'];
+export const BUILDING_TYPES: FacilityType[] = ['warehouse', 'chicken_coop', 'cow_barn'];
+export const MACHINE_TYPES: FacilityType[] = ['windmill', 'juicer', 'oven', 'cooking_pot'];
+
+// Non-crop items (used in sell panel + economy)
+export const NON_CROP_ITEMS: ItemType[] = ['wood', 'stone', 'egg', 'milk', 'flour', 'juice', 'bread', 'pizza'];
 
 // Item sell prices (for non-crop items)
 export const ITEM_SELL_PRICES: Partial<Record<ItemType, number>> = {
@@ -119,7 +180,15 @@ export const ITEM_SELL_PRICES: Partial<Record<ItemType, number>> = {
   milk: 12,
   wood: 2,
   stone: 3,
+  flour: 8,
+  juice: 10,
+  bread: 25,
+  pizza: 45,
 };
+
+export function isMachine(def: FacilityDef): boolean {
+  return def.maxAnimals === 0 && def.productionTime > 0;
+}
 
 // Upgrades
 

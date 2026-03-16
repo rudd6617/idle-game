@@ -44,11 +44,11 @@ export interface Crop {
 
 // === Items ===
 
-export type ItemType = CropType | 'egg' | 'milk' | 'wood' | 'stone';
+export type ItemType = CropType | 'egg' | 'milk' | 'wood' | 'stone' | 'flour' | 'juice' | 'bread' | 'pizza';
 
 // === Facility ===
 
-export type FacilityType = 'chicken_coop' | 'cow_barn' | 'warehouse';
+export type FacilityType = 'chicken_coop' | 'cow_barn' | 'warehouse' | 'windmill' | 'juicer' | 'oven' | 'cooking_pot';
 
 export interface Facility {
   id: number;

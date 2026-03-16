@@ -7,10 +7,11 @@ const HUD_H = 22;
 const TOOLBAR_H = 40;
 
 new Phaser.Game({
-  type: Phaser.AUTO,
+  type: Phaser.CANVAS,
   width: VIEWPORT_W,
   height: VIEWPORT_W + HUD_H + TOOLBAR_H,
   backgroundColor: '#1a1a2e',
   scene: [GameScene],
   parent: document.body,
+  pixelArt: false,
 });
