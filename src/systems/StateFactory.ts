@@ -83,6 +83,7 @@ export function createInitialState(): GameState {
     resources: { money: 200, items: {} },
     unlockedCrops: ['carrot', 'wheat'],
     upgrades: { workerSpeed: 0, growthSpeed: 0, maintenanceInterval: 0, autoHarvest: 0, demolishSpeed: 0, carryCapacity: 0 },
+    weather: { type: 'sunny', timer: 180_000 },
     orders: [],
     orderRefreshTimer: 0,
     nextCropId: 1,

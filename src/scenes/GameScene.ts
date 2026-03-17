@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { CropType, FacilityType, GameState, UpgradeType } from '../entities/types';
-import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, BUILDING_TYPES, MACHINE_TYPES, ITEM_SELL_PRICES, NON_CROP_ITEMS } from '../entities/constants';
+import { TILE_SIZE, MAP_WIDTH, MAP_HEIGHT, BLOCK_SIZE, BLOCK_COST, BASE_CARRY_CAPACITY, SAVE_INTERVAL, SAVE_KEY, CLEAR_COST, UPGRADE_DEFS, MAX_ORDERS, FACILITY_DEFS, BUILDING_TYPES, MACHINE_TYPES, ITEM_SELL_PRICES, NON_CROP_ITEMS, WEATHER_DEFS } from '../entities/constants';
 import { CROP_TYPES, CROP_DEFS } from '../entities/cropDefs';
 import { createInitialState } from '../systems/StateFactory';
 import { loadGame, saveGame, getOfflineTime } from '../systems/SaveSystem';
@@ -12,6 +12,7 @@ import { canCraftWorker, craftWorker, getWorkerCost } from '../systems/CraftSyst
 import { canUpgrade, applyUpgrade, getUpgradeCost, getUpgradeMultiplier } from '../systems/UpgradeSystem';
 import { updateOrders, canFulfillOrder, fulfillOrder } from '../systems/OrderSystem';
 import { updateAutoSeeders } from '../systems/AutoSeederSystem';
+import { updateWeather } from '../systems/WeatherSystem';
 import { isCropUnlocked, canUnlockCrop, unlockCrop } from '../systems/CropUnlockSystem';
 import { generateAllSprites, getCropTextureKey, getTileTextureKey } from '../sprites/SpriteGenerator';
 
@@ -29,6 +30,11 @@ const FONT_MD = { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' } 
 // FONT_HEADER available if needed for panel titles
 
 type PanelType = 'sell' | 'upgrades' | 'crops' | 'orders' | null;
+
+function formatTimer(ms: number): string {
+  const secs = Math.ceil(ms / 1000);
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+}
 
 export class GameScene extends Phaser.Scene {
   private state!: GameState;
@@ -48,6 +54,8 @@ export class GameScene extends Phaser.Scene {
   private seederCropIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private demolishOverlay!: Phaser.GameObjects.Graphics;
   private lockImages: Map<string, Phaser.GameObjects.Image> = new Map();
+  private weatherOverlay!: Phaser.GameObjects.Graphics;
+  private rainGraphics!: Phaser.GameObjects.Graphics;
 
   // Camera
   private wasdKeys!: { W: Phaser.Input.Keyboard.Key; A: Phaser.Input.Keyboard.Key; S: Phaser.Input.Keyboard.Key; D: Phaser.Input.Keyboard.Key };
@@ -241,6 +249,10 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.rightButtonDown()) this.clearModes(); });
     this.input.keyboard?.on('keydown-ESC', () => { this.clearModes(); this.activePanel = null; this.rebuildPanel(); });
 
+    // Weather overlay (world-space, covers entire map)
+    this.weatherOverlay = this.add.graphics().setDepth(30);
+    this.rainGraphics = this.add.graphics().setDepth(31);
+
     // Background tab handler
     document.addEventListener('visibilitychange', () => {
       if (this.resetting) return;
@@ -347,6 +359,7 @@ export class GameScene extends Phaser.Scene {
     if (this.wasdKeys.W.isDown) cam.scrollY -= camSpeed;
     if (this.wasdKeys.S.isDown) cam.scrollY += camSpeed;
 
+    updateWeather(this.state, delta);
     updateCrops(this.state, delta);
     updateWorkers(this.state, delta);
     updateFacilities(this.state, delta);
@@ -356,6 +369,7 @@ export class GameScene extends Phaser.Scene {
     this.saveTimer += delta;
     if (this.saveTimer >= SAVE_INTERVAL) { this.saveTimer = 0; saveGame(this.state); }
 
+    this.syncWeather(delta);
     this.syncCrops();
     this.syncFacilities();
     this.syncWorkers();
@@ -552,6 +566,7 @@ export class GameScene extends Phaser.Scene {
     const cappedMs = Math.min(ms, 3_600_000);
     for (let t = 0; t < cappedMs; t += 1000) {
       const dt = Math.min(1000, cappedMs - t);
+      updateWeather(this.state, dt);
       updateCrops(this.state, dt);
       updateWorkers(this.state, dt);
       updateFacilities(this.state, dt);
@@ -561,6 +576,40 @@ export class GameScene extends Phaser.Scene {
   }
 
   // === SYNC ===
+
+  private rainOffset = 0;
+  private lastWeatherType = '';
+
+  private syncWeather(dt: number): void {
+    const weather = this.state.weather.type;
+    const def = WEATHER_DEFS[weather];
+
+    // Overlay tint — only redraw on weather change
+    if (weather !== this.lastWeatherType) {
+      this.lastWeatherType = weather;
+      this.weatherOverlay.clear();
+      if (def.overlayAlpha > 0) {
+        this.weatherOverlay.fillStyle(def.overlayColor, def.overlayAlpha);
+        this.weatherOverlay.fillRect(0, 0, MAP_PX_W, MAP_PX_H);
+      }
+      // Clear rain when switching away
+      if (!def.stopsWaterDecay) this.rainGraphics.clear();
+    }
+
+    // Rain particles
+    if (def.stopsWaterDecay) {
+      this.rainOffset = (this.rainOffset + dt * 0.3) % 60;
+      this.rainGraphics.clear();
+      this.rainGraphics.lineStyle(1, 0x88bbee, 0.4);
+      for (let x = -20; x < MAP_PX_W + 20; x += 20) {
+        for (let y = -20; y < MAP_PX_H + 20; y += 60) {
+          const rx = x + this.rainOffset * 0.5;
+          const ry = y + this.rainOffset;
+          this.rainGraphics.lineBetween(rx, ry, rx + 6, ry + 12);
+        }
+      }
+    }
+  }
 
   private syncCrops(): void {
     const activeIds = new Set<number>();
@@ -712,7 +761,8 @@ export class GameScene extends Phaser.Scene {
     const { money } = this.state.resources;
     const stored = getCurrentStorage(this.state);
     const cap = getWarehouseCapacity(this.state);
-    this.hudText.setText(`$${money}  Storage:${stored}/${cap}  W:${this.state.workers.length}  G:${this.state.crops.length}`);
+    const wDef = WEATHER_DEFS[this.state.weather.type];
+    this.hudText.setText(`$${money}  ${stored}/${cap}  W:${this.state.workers.length}  G:${this.state.crops.length}  ${wDef.emoji} ${formatTimer(this.state.weather.timer)}`);
 
     // Worker button label
     const wl = (this as any)._workerLabel as Phaser.GameObjects.Text;
@@ -791,9 +841,7 @@ export class GameScene extends Phaser.Scene {
         this.orderClaimTexts[i]!.setText('').disableInteractive();
         continue;
       }
-      const secs = Math.ceil(order.timeRemaining / 1000);
-      const timeStr = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-      this.orderTexts[i]!.setText(`#${order.id} [${timeStr}] ${order.requirements.map(r => `${r.crop} x${r.amount}`).join('  ')}`);
+      this.orderTexts[i]!.setText(`#${order.id} [${formatTimer(order.timeRemaining)}] ${order.requirements.map(r => `${r.crop} x${r.amount}`).join('  ')}`);
       const canClaim = canFulfillOrder(this.state, order);
       this.orderClaimTexts[i]!.setText(`[Claim $${order.reward}]`).setColor(canClaim ? '#4ade80' : '#555555');
       if (canClaim) this.orderClaimTexts[i]!.setInteractive({ useHandCursor: true });

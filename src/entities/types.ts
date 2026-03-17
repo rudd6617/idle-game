@@ -109,6 +109,15 @@ export interface Order {
   timeRemaining: number;
 }
 
+// === Weather ===
+
+export type WeatherType = 'sunny' | 'rain' | 'wind' | 'heatwave';
+
+export interface Weather {
+  type: WeatherType;
+  timer: number;
+}
+
 // === Game State ===
 
 export interface BlockCoord {
@@ -125,6 +134,7 @@ export interface GameState {
   resources: Resources;
   unlockedCrops: CropType[];
   upgrades: Record<UpgradeType, number>;
+  weather: Weather;
   orders: Order[];
   orderRefreshTimer: number;
   nextCropId: number;

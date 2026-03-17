@@ -1,4 +1,4 @@
-import type { FacilityType, ItemType, TileType, UpgradeType } from './types';
+import type { FacilityType, ItemType, TileType, UpgradeType, WeatherType } from './types';
 
 export const TILE_SIZE = 48;
 export const BLOCK_SIZE = 10;
@@ -203,6 +203,27 @@ export const ITEM_SELL_PRICES: Partial<Record<ItemType, number>> = {
 export function isMachine(def: FacilityDef): boolean {
   return def.maxAnimals === 0 && def.productionTime > 0;
 }
+
+// Weather
+
+export interface WeatherDef {
+  minDuration: number;
+  maxDuration: number;
+  growthMult: number;
+  waterDecayMult: number;
+  workerSpeedMult: number;
+  stopsWaterDecay: boolean;
+  overlayColor: number;
+  overlayAlpha: number;
+  emoji: string;
+}
+
+export const WEATHER_DEFS: Record<WeatherType, WeatherDef> = {
+  sunny:    { minDuration: 180_000, maxDuration: 300_000, growthMult: 1,   waterDecayMult: 1, workerSpeedMult: 1,   stopsWaterDecay: false, overlayColor: 0x000000, overlayAlpha: 0,    emoji: '☀' },
+  rain:     { minDuration:  60_000, maxDuration: 120_000, growthMult: 1,   waterDecayMult: 1, workerSpeedMult: 1,   stopsWaterDecay: true,  overlayColor: 0x4488cc, overlayAlpha: 0.15, emoji: '🌧' },
+  wind:     { minDuration:  60_000, maxDuration:  60_000, growthMult: 1,   waterDecayMult: 1, workerSpeedMult: 0.8, stopsWaterDecay: false, overlayColor: 0x888888, overlayAlpha: 0.12, emoji: '💨' },
+  heatwave: { minDuration:  90_000, maxDuration:  90_000, growthMult: 1.3, waterDecayMult: 2, workerSpeedMult: 1,   stopsWaterDecay: false, overlayColor: 0xcc8844, overlayAlpha: 0.15, emoji: '🔥' },
+};
 
 // Upgrades
 

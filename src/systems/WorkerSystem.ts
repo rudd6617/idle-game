@@ -1,12 +1,13 @@
 import type { GameState, Task, Worker, Crop, Facility } from '../entities/types';
-import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS, BASE_CARRY_CAPACITY, isMachine } from '../entities/constants';
+import { WORKER_SPEED, WORK_DURATION, TILE_SIZE, FACILITY_DEFS, TILE_DEMOLISH_DEFS, BASE_CARRY_CAPACITY, WEATHER_DEFS, isMachine } from '../entities/constants';
 import { CROP_DEFS } from '../entities/cropDefs';
 import { plantCrop, removeCrop } from './CropSystem';
 import { needsFeeding, needsCollection, hasStorageSpace, getWarehouseCapacity, getCurrentStorage } from './FacilitySystem';
 import { getUpgradeMultiplier } from './UpgradeSystem';
 
 export function updateWorkers(state: GameState, dt: number): void {
-  const speedMult = getUpgradeMultiplier(state, 'workerSpeed');
+  const speedMult = getUpgradeMultiplier(state, 'workerSpeed')
+    * WEATHER_DEFS[state.weather.type].workerSpeedMult;
   for (const worker of state.workers) {
     switch (worker.state) {
       case 'idle':

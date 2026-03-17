@@ -1,10 +1,12 @@
 import type { Crop, CropType, GameState } from '../entities/types';
 import { CROP_DEFS } from '../entities/cropDefs';
+import { WEATHER_DEFS } from '../entities/constants';
 import { getUpgradeMultiplier } from './UpgradeSystem';
 import { hasStorageSpace } from './FacilitySystem';
 
 export function updateCrops(state: GameState, dt: number): void {
-  const growthMult = getUpgradeMultiplier(state, 'growthSpeed');
+  const weatherDef = WEATHER_DEFS[state.weather.type];
+  const growthMult = getUpgradeMultiplier(state, 'growthSpeed') * weatherDef.growthMult;
   const maintMult = getUpgradeMultiplier(state, 'maintenanceInterval');
   const autoHarvest = state.upgrades.autoHarvest > 0;
 
@@ -19,6 +21,13 @@ export function updateCrops(state: GameState, dt: number): void {
   for (const crop of state.crops) {
     if (crop.stage === 'ready') continue;
 
+    // Rain clears water needs
+    if (weatherDef.stopsWaterDecay && crop.needsWater) {
+      crop.needsWater = false;
+      const def = CROP_DEFS[crop.type];
+      crop.waterTimer = def?.waterInterval ?? 8000;
+    }
+
     // Growth pauses if needs water or weeding
     if (!crop.needsWater && !crop.needsWeeding) {
       crop.growthTimer -= dt * growthMult;
@@ -28,9 +37,11 @@ export function updateCrops(state: GameState, dt: number): void {
     }
 
     // Water timer (higher maintMult = slower decay = longer intervals)
-    crop.waterTimer -= dt / maintMult;
-    if (crop.waterTimer <= 0) {
-      crop.needsWater = true;
+    if (!weatherDef.stopsWaterDecay) {
+      crop.waterTimer -= dt * weatherDef.waterDecayMult / maintMult;
+      if (crop.waterTimer <= 0) {
+        crop.needsWater = true;
+      }
     }
 
     // Weed timer

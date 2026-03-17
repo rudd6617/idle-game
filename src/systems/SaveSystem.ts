@@ -85,6 +85,9 @@ function migrateState(state: GameState): void {
 
   if (!state.unlockedCrops) state.unlockedCrops = ['carrot', 'wheat', 'tomato'];
 
+  // Weather
+  if (!state.weather) state.weather = { type: 'sunny', timer: 180_000 };
+
   // Expand map
   const oldH = state.tiles.length;
   const oldW = state.tiles[0]?.length ?? 0;
