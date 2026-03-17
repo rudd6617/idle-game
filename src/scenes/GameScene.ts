@@ -16,21 +16,22 @@ import { updateWeather } from '../systems/WeatherSystem';
 import { isCropUnlocked, canUnlockCrop, unlockCrop } from '../systems/CropUnlockSystem';
 import { generateAllSprites, getCropTextureKey, getTileTextureKey } from '../sprites/SpriteGenerator';
 
-const VIEWPORT_W = BLOCK_SIZE * TILE_SIZE + TILE_SIZE;
+const VIEWPORT_W = BLOCK_SIZE * TILE_SIZE;
+const SIDEBAR_W = 200;
+const CANVAS_W = VIEWPORT_W + SIDEBAR_W;
 const MAP_PX_W = MAP_WIDTH * TILE_SIZE;
 const MAP_PX_H = MAP_HEIGHT * TILE_SIZE;
 const HUD_H = 22;
 const TOOLBAR_H = 40;
-const TOOLBAR2_H = 32;
+const TOOLBAR2_H = 36;
 const CANVAS_H = VIEWPORT_W + HUD_H + TOOLBAR_H + TOOLBAR2_H;
-const PANEL_H = 280;
+
 const SUB_BAR_H = 36;
 
 const FONT_SM = { fontSize: '11px', color: '#999999', fontFamily: 'monospace' } as const;
 const FONT_MD = { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' } as const;
 // FONT_HEADER available if needed for panel titles
 
-type PanelType = 'sell' | 'upgrades' | 'crops' | 'orders' | null;
 
 function formatTimer(ms: number): string {
   const secs = Math.ceil(ms / 1000);
@@ -56,6 +57,8 @@ export class GameScene extends Phaser.Scene {
   private demolishOverlay!: Phaser.GameObjects.Graphics;
   private gatherIcons: Map<string, Phaser.GameObjects.Image> = new Map();
   private lockImages: Map<string, Phaser.GameObjects.Image> = new Map();
+  private facilityLabels: Map<number, Phaser.GameObjects.Text> = new Map();
+  private facilityAnimalIcons: Map<number, Phaser.GameObjects.Image[]> = new Map();
   private weatherOverlay!: Phaser.GameObjects.Graphics;
   private rainGraphics!: Phaser.GameObjects.Graphics;
 
@@ -75,19 +78,19 @@ export class GameScene extends Phaser.Scene {
   // UI
   private hudText!: Phaser.GameObjects.Text;
   private modeText!: Phaser.GameObjects.Text;
-  private activePanel: PanelType = null;
-  private panelBg!: Phaser.GameObjects.Graphics;
-  // Panel content — pre-created, toggled visibility
+  // Sidebar content — pre-created, updated each frame
   private sellTexts: Phaser.GameObjects.Text[] = [];
   private itemSellTexts: Phaser.GameObjects.Text[] = [];
   private upgradeTexts: Phaser.GameObjects.Text[] = [];
   private cropUnlockTexts: Phaser.GameObjects.Text[] = [];
   private orderTexts: Phaser.GameObjects.Text[] = [];
   private orderClaimTexts: Phaser.GameObjects.Text[] = [];
+  private sidebarHeaders: Phaser.GameObjects.Text[] = [];
   private toolbarButtons: Phaser.GameObjects.Image[] = [];
   private activeGroup: 'buildings' | 'machines' | null = null;
   private subBarBg!: Phaser.GameObjects.Graphics;
   private subBarItems: Array<{ img: Phaser.GameObjects.Image; label: Phaser.GameObjects.Text; group: string }> = [];
+  private tooltipText!: Phaser.GameObjects.Text;
 
   constructor() {
     super('GameScene');
@@ -144,7 +147,7 @@ export class GameScene extends Phaser.Scene {
     // === TOP HUD ===
     const hudBg = this.add.graphics().setScrollFactor(0).setDepth(50);
     hudBg.fillStyle(0x111122, 0.9);
-    hudBg.fillRect(0, 0, VIEWPORT_W, HUD_H);
+    hudBg.fillRect(0, 0, CANVAS_W, HUD_H);
     this.hudText = this.add.text(8, 4, '', { fontSize: '12px', color: '#ffffff', fontFamily: 'monospace' })
       .setScrollFactor(0).setDepth(51);
     // Reset button
@@ -155,32 +158,49 @@ export class GameScene extends Phaser.Scene {
     // === BOTTOM TOOLBAR (row 2 — action bar) ===
     const tb2Y = CANVAS_H - TOOLBAR_H - TOOLBAR2_H;
     const tb2Bg = this.add.graphics().setScrollFactor(0).setDepth(50);
-    tb2Bg.fillStyle(0x111122, 0.9);
+    tb2Bg.fillStyle(0x111122, 1);
     tb2Bg.fillRect(0, tb2Y, VIEWPORT_W, TOOLBAR2_H);
     tb2Bg.lineStyle(1, 0x333333, 1);
     tb2Bg.lineBetween(0, tb2Y, VIEWPORT_W, tb2Y);
 
+    // Row 2 action buttons — icon + label
+    const tb2BtnStyle = { fontSize: '8px', color: '#aaaaaa', fontFamily: 'monospace' } as const;
+
     // Gather button
-    const gatherBtn = this.add.image(20, tb2Y + 16, 'tb_gather')
-      .setScrollFactor(0).setDepth(51).setDisplaySize(22, 22)
+    const gatherBtn = this.add.image(25, tb2Y + 12, 'tb_gather')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(18, 18)
       .setInteractive({ useHandCursor: true });
     gatherBtn.on('pointerdown', () => { this.clearModes(); this.gatherMode = true; });
     this.toolbarButtons.push(gatherBtn);
+    this.addTooltip(gatherBtn, 'Mark tiles to gather resources');
+    this.add.text(25, tb2Y + 24, 'Gather', { ...tb2BtnStyle })
+      .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0);
 
     // Worker button (icon + cost label)
-    const wbX = 60;
-    const workerIcon = this.add.image(wbX, tb2Y + 16, 'tb_worker')
-      .setScrollFactor(0).setDepth(51).setDisplaySize(22, 22)
+    const wbX = 80;
+    const workerIcon = this.add.image(wbX, tb2Y + 12, 'tb_worker')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(18, 18)
       .setInteractive({ useHandCursor: true });
     workerIcon.on('pointerdown', () => { craftWorker(this.state); });
-    const workerLabel = this.add.text(wbX + 16, tb2Y + 4, '', { fontSize: '9px', color: '#4ade80', fontFamily: 'monospace' })
-      .setScrollFactor(0).setDepth(51);
+    this.addTooltip(workerIcon, 'Hire a worker');
+    const workerLabel = this.add.text(wbX, tb2Y + 24, '', { fontSize: '8px', color: '#4ade80', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0);
     (this as any)._workerLabel = workerLabel;
+
+    // Demolish button
+    const demolishBtn = this.add.image(140, tb2Y + 12, 'tb_demolish')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(18, 18)
+      .setInteractive({ useHandCursor: true });
+    demolishBtn.on('pointerdown', () => { this.clearModes(); this.demolishMode = true; });
+    this.toolbarButtons.push(demolishBtn);
+    this.addTooltip(demolishBtn, 'Remove a facility');
+    this.add.text(140, tb2Y + 24, 'Demolish', { ...tb2BtnStyle })
+      .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0);
 
     // === BOTTOM TOOLBAR (row 1 — main tools) ===
     const tbY = CANVAS_H - TOOLBAR_H;
     const tbBg = this.add.graphics().setScrollFactor(0).setDepth(50);
-    tbBg.fillStyle(0x111122, 0.9);
+    tbBg.fillStyle(0x111122, 1);
     tbBg.fillRect(0, tbY, VIEWPORT_W, TOOLBAR_H);
     tbBg.lineStyle(1, 0x333333, 1);
     tbBg.lineBetween(0, tbY, VIEWPORT_W, tbY);
@@ -189,24 +209,43 @@ export class GameScene extends Phaser.Scene {
     this.modeText = this.add.text(VIEWPORT_W / 2, tb2Y - 14, '', { fontSize: '10px', color: '#facc15', fontFamily: 'monospace' })
       .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0.5);
 
-    // Tool buttons (left side) — grouped
-    const tools: Array<{ key: string; action: () => void }> = [
-      { key: 'tb_farm', action: () => { this.clearModes(); this.placingFarmland = true; } },
-      { key: 'tb_build', action: () => this.toggleGroup('buildings') },
-      { key: 'tb_machine', action: () => this.toggleGroup('machines') },
-      { key: 'tb_demolish', action: () => { this.clearModes(); this.demolishMode = true; } },
+    // Tool buttons (left side) — grouped, icon + label
+    const tbBtnStyle = { fontSize: '8px', color: '#aaaaaa', fontFamily: 'monospace' } as const;
+    const tools: Array<{ key: string; label: string; tooltip: string; action: () => void }> = [
+      { key: 'tb_build', label: 'Build', tooltip: 'Farms & buildings', action: () => this.toggleGroup('buildings') },
+      { key: 'tb_machine', label: 'Machine', tooltip: 'Processing machines', action: () => this.toggleGroup('machines') },
     ];
 
     tools.forEach((t, i) => {
-      const btn = this.add.image(20 + i * 36, tbY + 20, t.key)
-        .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
+      const x = 25 + i * 50;
+      const btn = this.add.image(x, tbY + 14, t.key)
+        .setScrollFactor(0).setDepth(51).setDisplaySize(20, 20)
         .setInteractive({ useHandCursor: true });
       btn.on('pointerdown', t.action);
       this.toolbarButtons.push(btn);
+      this.addTooltip(btn, t.tooltip);
+      this.add.text(x, tbY + 28, t.label, { ...tbBtnStyle })
+        .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0);
     });
 
     // Sub-bar for facility groups
     this.subBarBg = this.add.graphics().setScrollFactor(0).setDepth(52).setVisible(false);
+    // Farmland entry in buildings sub-bar
+    const farmCost = CLEAR_COST['grass'] ?? 0;
+    const farmImg = this.add.image(0, 0, 'tb_farm')
+      .setScrollFactor(0).setDepth(53).setDisplaySize(24, 24)
+      .setInteractive({ useHandCursor: true }).setVisible(false);
+    farmImg.on('pointerdown', () => {
+      this.activeGroup = null;
+      this.refreshSubBar();
+      this.clearPlacementModes();
+      this.placingFarmland = true;
+    });
+    this.addTooltip(farmImg, 'Convert grass to farmland');
+    const farmLabel = this.add.text(0, 0, `$${farmCost}`, { fontSize: '9px', color: '#aaaaaa', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(53).setOrigin(0.5, 0).setVisible(false);
+    this.subBarItems.push({ img: farmImg, label: farmLabel, group: 'buildings' });
+
     const subBarGroups: Array<{ group: 'buildings' | 'machines'; types: typeof BUILDING_TYPES }> = [
       { group: 'buildings', types: BUILDING_TYPES },
       { group: 'machines', types: MACHINE_TYPES },
@@ -223,46 +262,46 @@ export class GameScene extends Phaser.Scene {
           this.clearPlacementModes();
           if (this.state.resources.money >= def.cost) this.placingFacility = type;
         });
+        // Build tooltip from def
+        const inKeys = Object.entries(def.inputPerAnimal).map(([k, v]) => `${k} x${v}`).join(', ');
+        const outKeys = Object.entries(def.outputPerAnimal).map(([k, v]) => `${k} x${v}`).join(', ');
+        let tip = `${def.label} (${def.width}x${def.height})`;
+        if (inKeys && outKeys) tip += ` | ${inKeys} → ${outKeys}`;
+        else if (def.maxAnimals > 0) tip += ` | max ${def.maxAnimals} ${def.animalName}s`;
+        else if (def.capacity > 0) tip += ` | capacity ${def.capacity}`;
+        this.addTooltip(img, tip);
         const label = this.add.text(0, 0, `$${def.cost}`, { fontSize: '9px', color: '#aaaaaa', fontFamily: 'monospace' })
           .setScrollFactor(0).setDepth(53).setOrigin(0.5, 0).setVisible(false);
         this.subBarItems.push({ img, label, group });
       }
     }
 
-    // Panel buttons (right side)
-    const panels: Array<{ key: string; panel: PanelType }> = [
-      { key: 'tb_sell', panel: 'sell' },
-      { key: 'tb_upgrade', panel: 'upgrades' },
-      { key: 'tb_crops', panel: 'crops' },
-      { key: 'tb_orders', panel: 'orders' },
-    ];
-    panels.forEach((p, i) => {
-      const btn = this.add.image(VIEWPORT_W - 20 - (panels.length - 1 - i) * 36, tbY + 20, p.key)
-        .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
-        .setInteractive({ useHandCursor: true });
-      btn.on('pointerdown', () => {
-        this.clearModes();
-        this.activePanel = this.activePanel === p.panel ? null : p.panel;
-        this.rebuildPanel();
-      });
-      this.toolbarButtons.push(btn);
-    });
+    // === RIGHT SIDEBAR ===
+    const sbX = VIEWPORT_W;
+    const sbBg = this.add.graphics().setScrollFactor(0).setDepth(48);
+    sbBg.fillStyle(0x111122, 1);
+    sbBg.fillRect(sbX, 0, SIDEBAR_W, CANVAS_H);
+    sbBg.lineStyle(1, 0x333333, 1);
+    sbBg.lineBetween(sbX, 0, sbX, CANVAS_H);
 
-    // Panel background (hidden initially)
-    this.panelBg = this.add.graphics().setScrollFactor(0).setDepth(48).setVisible(false);
+    // Tooltip
+    this.tooltipText = this.add.text(0, 0, '', { fontSize: '9px', color: '#ffffff', fontFamily: 'monospace', backgroundColor: '#333344', padding: { x: 4, y: 2 } })
+      .setScrollFactor(0).setDepth(55).setOrigin(0.5, 1).setVisible(false);
+
 
     // Pre-create panel content elements
     this.createPanelElements();
+    this.rebuildSidebar();
 
     // Tile click
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H) return;
+      if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H || pointer.x >= VIEWPORT_W) return;
       this.handleTileClick(pointer);
     });
 
     // Cancel modes
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.rightButtonDown()) this.clearModes(); });
-    this.input.keyboard?.on('keydown-ESC', () => { this.clearModes(); this.activePanel = null; this.rebuildPanel(); });
+    this.input.keyboard?.on('keydown-ESC', () => { this.clearModes(); });
 
     // Weather overlay (world-space, covers entire map)
     this.weatherOverlay = this.add.graphics().setDepth(30);
@@ -319,47 +358,44 @@ export class GameScene extends Phaser.Scene {
       ct.on('pointerdown', () => { const order = this.state.orders[i]; if (order) fulfillOrder(this.state, order); });
       this.orderClaimTexts.push(ct);
     }
+
+    // Group headers
+    const headerStyle = { fontSize: '9px', color: '#facc15', fontFamily: 'monospace' };
+    for (const label of ['Sell', 'Upgrades', 'Crops', 'Orders']) {
+      this.sidebarHeaders.push(this.add.text(0, 0, `— ${label} —`, headerStyle).setScrollFactor(0).setDepth(49).setVisible(false));
+    }
   }
 
-  private rebuildPanel(): void {
-    // Hide all panel content
-    [...this.sellTexts, ...this.itemSellTexts, ...this.upgradeTexts, ...this.cropUnlockTexts, ...this.orderTexts, ...this.orderClaimTexts]
-      .forEach(t => t.setVisible(false));
+  private rebuildSidebar(): void {
+    const allTexts = [...this.sellTexts, ...this.itemSellTexts, ...this.upgradeTexts, ...this.cropUnlockTexts, ...this.orderTexts, ...this.orderClaimTexts];
+    allTexts.forEach(t => t.setVisible(false));
+    this.sidebarHeaders.forEach(h => h.setVisible(false));
 
-    if (!this.activePanel) {
-      this.panelBg.setVisible(false);
-      return;
-    }
+    const sbX = VIEWPORT_W;
+    const x = sbX + 6;
+    let y = HUD_H + 4;
 
-    const panelY = CANVAS_H - TOOLBAR_H - TOOLBAR2_H - PANEL_H;
-    this.panelBg.setVisible(true);
-    this.panelBg.clear();
-    this.panelBg.fillStyle(0x111122, 0.92);
-    this.panelBg.fillRect(0, panelY, VIEWPORT_W, PANEL_H);
-    this.panelBg.lineStyle(1, 0x333333, 1);
-    this.panelBg.lineBetween(0, panelY, VIEWPORT_W, panelY);
+    // Sell
+    this.sidebarHeaders[0]!.setPosition(x, y).setVisible(true); y += 12;
+    this.sellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 13; });
+    this.itemSellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 13; });
+    y += 4;
 
-    // Position content based on active panel
-    const x = 12;
-    let y = panelY + 8;
+    // Upgrades
+    this.sidebarHeaders[1]!.setPosition(x, y).setVisible(true); y += 12;
+    this.upgradeTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 14; });
+    y += 4;
 
-    switch (this.activePanel) {
-      case 'sell':
-        this.sellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 16; });
-        this.itemSellTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 16; });
-        break;
-      case 'upgrades':
-        this.upgradeTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 18; });
-        break;
-      case 'crops':
-        this.cropUnlockTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 18; });
-        break;
-      case 'orders':
-        for (let i = 0; i < MAX_ORDERS; i++) {
-          this.orderTexts[i]!.setPosition(x, y).setVisible(true); y += 16;
-          this.orderClaimTexts[i]!.setPosition(x, y).setVisible(true); y += 22;
-        }
-        break;
+    // Crops
+    this.sidebarHeaders[2]!.setPosition(x, y).setVisible(true); y += 12;
+    this.cropUnlockTexts.forEach(t => { t.setPosition(x, y).setVisible(true); y += 14; });
+    y += 4;
+
+    // Orders
+    this.sidebarHeaders[3]!.setPosition(x, y).setVisible(true); y += 12;
+    for (let i = 0; i < MAX_ORDERS; i++) {
+      this.orderTexts[i]!.setPosition(x, y).setVisible(true); y += 13;
+      this.orderClaimTexts[i]!.setPosition(x, y).setVisible(true); y += 16;
     }
   }
 
@@ -391,6 +427,13 @@ export class GameScene extends Phaser.Scene {
     this.syncTileVisibility();
     this.drawIndicators();
     this.drawUI();
+  }
+
+  private addTooltip(target: Phaser.GameObjects.Image, text: string): void {
+    target.on('pointerover', () => {
+      this.tooltipText.setText(text).setPosition(target.x, target.y - target.displayHeight / 2 - 4).setVisible(true);
+    });
+    target.on('pointerout', () => { this.tooltipText.setVisible(false); });
   }
 
   // === CLICK HANDLING ===
@@ -539,7 +582,7 @@ export class GameScene extends Phaser.Scene {
   private updatePlacementPreview(pointer: Phaser.Input.Pointer): void {
     const g = this.placementPreview;
     g.clear();
-    if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H) return;
+    if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H || pointer.x >= VIEWPORT_W) return;
 
     const worldX = pointer.x + this.cameras.main.scrollX;
     const worldY = pointer.y + this.cameras.main.scrollY;
@@ -627,6 +670,14 @@ export class GameScene extends Phaser.Scene {
 
   private syncCrops(): void {
     const activeIds = new Set<number>();
+    // Collect tiles being actively worked by workers
+    const workedTileTask = new Map<string, string>();
+    for (const w of this.state.workers) {
+      if (w.state === 'working' && w.currentTask) {
+        workedTileTask.set(`${w.currentTask.targetX},${w.currentTask.targetY}`, w.currentTask.type);
+      }
+    }
+    const swing = Math.sin(this.time.now / 120) * 25;
     for (const crop of this.state.crops) {
       activeIds.add(crop.id);
       const key = getCropTextureKey(crop.type, crop.stage);
@@ -634,19 +685,24 @@ export class GameScene extends Phaser.Scene {
       if (!img) { img = this.add.image(0, 0, key).setDepth(5); this.cropImages.set(crop.id, img); }
       img.setTexture(key).setPosition(crop.tileX * TILE_SIZE + TILE_SIZE / 2, crop.tileY * TILE_SIZE + TILE_SIZE / 2).setDisplaySize(TILE_SIZE - 4, TILE_SIZE - 4).setVisible(true);
 
+      const tileTask = workedTileTask.get(`${crop.tileX},${crop.tileY}`);
+
       let wi = this.cropWaterIcons.get(crop.id);
       if (!wi) { wi = this.add.image(0, 0, 'icon_water').setDepth(8); this.cropWaterIcons.set(crop.id, wi); }
       wi.setPosition(crop.tileX * TILE_SIZE + 10, crop.tileY * TILE_SIZE + 10).setVisible(crop.needsWater);
+      wi.setAngle(tileTask === 'water' ? swing : 0);
 
       let we = this.cropWeedIcons.get(crop.id);
       if (!we) { we = this.add.image(0, 0, 'icon_weed').setDepth(8); this.cropWeedIcons.set(crop.id, we); }
       we.setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 10, crop.tileY * TILE_SIZE + 10).setVisible(crop.needsWeeding);
+      we.setAngle(tileTask === 'weed' ? swing : 0);
 
       // Ready icon — floating item for pickup
       if (crop.stage === 'ready') {
         let ri = this.cropReadyIcons.get(crop.id);
         if (!ri) { ri = this.add.image(0, 0, `icon_${crop.type}`).setDepth(12); this.cropReadyIcons.set(crop.id, ri); }
         ri.setTexture(`icon_${crop.type}`).setPosition(crop.tileX * TILE_SIZE + TILE_SIZE - 8, crop.tileY * TILE_SIZE + TILE_SIZE - 8).setDisplaySize(12, 12).setVisible(true);
+        ri.setAngle(tileTask === 'harvest' ? swing : 0);
       } else {
         const ri = this.cropReadyIcons.get(crop.id);
         if (ri) { ri.setVisible(false); }
@@ -679,19 +735,60 @@ export class GameScene extends Phaser.Scene {
         if (!icon) { icon = this.add.image(0, 0, texKey).setDepth(10); this.seederCropIcons.set(fac.id, icon); }
         icon.setTexture(texKey).setPosition(fac.originX * TILE_SIZE + 7, fac.originY * TILE_SIZE + 7).setVisible(true);
       }
+
+      // Animal icons — one icon per tile cell
+      const def = FACILITY_DEFS[fac.type];
+      if (def.maxAnimals > 0) {
+        const iconKey = `icon_${fac.type}`;
+        let icons = this.facilityAnimalIcons.get(fac.id);
+        if (!icons) { icons = []; this.facilityAnimalIcons.set(fac.id, icons); }
+        while (icons.length < def.maxAnimals) {
+          icons.push(this.add.image(0, 0, iconKey).setDepth(10).setDisplaySize(14, 14).setVisible(false));
+        }
+        const fx = fac.originX * TILE_SIZE, fy = fac.originY * TILE_SIZE;
+        // Place animals in tile cells: skip top row (building), fill remaining cells
+        const cols = fac.width;
+        const startRow = 1; // skip first tile row (house)
+        for (let a = 0; a < def.maxAnimals; a++) {
+          const col = a % cols;
+          const row = startRow + Math.floor(a / cols);
+          const cx = fx + (col + 0.5) * TILE_SIZE;
+          const cy = fy + (row + 0.5) * TILE_SIZE;
+          icons[a]!.setPosition(cx, cy).setVisible(a < fac.animalCount);
+        }
+      }
+
+      // Facility info label (non-animal facilities only)
+      let infoStr = '';
+      if (fac.type === 'warehouse') {
+        infoStr = `${getCurrentStorage(this.state)}/${getWarehouseCapacity(this.state)}`;
+      } else if (fac.type !== 'auto_seeder' && def.maxAnimals === 0) {
+        const outEntries = Object.entries(fac.outputBuffer).filter(([, v]) => (v ?? 0) > 0);
+        if (outEntries.length > 0) infoStr = outEntries.map(([k, v]) => `${k} ${v}`).join(' ');
+      }
+      if (infoStr) {
+        let lbl = this.facilityLabels.get(fac.id);
+        if (!lbl) { lbl = this.add.text(0, 0, '', { fontSize: '8px', color: '#ffffff', fontFamily: 'monospace', backgroundColor: '#00000088', padding: { x: 2, y: 1 } }).setDepth(10).setOrigin(0.5, 0); this.facilityLabels.set(fac.id, lbl); }
+        lbl.setText(infoStr).setPosition(fac.originX * TILE_SIZE + pw / 2, fac.originY * TILE_SIZE + ph - 10).setVisible(true);
+      } else {
+        const lbl = this.facilityLabels.get(fac.id);
+        if (lbl) lbl.setVisible(false);
+      }
     }
     for (const [id, img] of this.facilityImages) { if (!activeIds.has(id)) { img.destroy(); this.facilityImages.delete(id); } }
     for (const [id, icon] of this.seederCropIcons) { if (!activeIds.has(id)) { icon.destroy(); this.seederCropIcons.delete(id); } }
+    for (const [id, lbl] of this.facilityLabels) { if (!activeIds.has(id)) { lbl.destroy(); this.facilityLabels.delete(id); } }
+    for (const [id, icons] of this.facilityAnimalIcons) { if (!activeIds.has(id)) { icons.forEach(i => i.destroy()); this.facilityAnimalIcons.delete(id); } }
   }
 
   private syncWorkers(): void {
     while (this.workerImages.length < this.state.workers.length) {
-      this.workerImages.push(this.add.image(0, 0, 'worker_idle').setDepth(15));
-      this.workerCarryIcons.push(this.add.image(0, 0, 'icon_fallow').setDepth(16).setVisible(false));
+      this.workerImages.push(this.add.image(0, 0, 'worker_idle').setDepth(35));
+      this.workerCarryIcons.push(this.add.image(0, 0, 'icon_fallow').setDepth(36).setVisible(false));
     }
     for (let i = 0; i < this.state.workers.length; i++) {
       const w = this.state.workers[i]!;
-      this.workerImages[i]!.setTexture(w.state === 'working' ? 'worker_working' : 'worker_idle').setPosition(w.x, w.y).setDisplaySize(16, 16).setVisible(true);
+      this.workerImages[i]!.setTexture('worker_idle').setPosition(w.x, w.y).setDisplaySize(16, 16).setVisible(true);
       // Show carried item icon above worker
       const carried = Object.entries(w.carryingItems).find(([, v]) => (v ?? 0) > 0);
       const icon = this.workerCarryIcons[i]!;
@@ -729,10 +826,10 @@ export class GameScene extends Phaser.Scene {
         const key = `${bx},${by}`;
         activeLocks.add(key);
         let cx = bx * blockPx + blockPx / 2, cy = by * blockPx + blockPx / 2;
-        if (bx > 0 && this.isBlockOwned(bx - 1, by)) cx = bx * blockPx + TILE_SIZE / 2;
-        else if (bx < maxBx - 1 && this.isBlockOwned(bx + 1, by)) cx = (bx + 1) * blockPx - TILE_SIZE / 2;
-        else if (by > 0 && this.isBlockOwned(bx, by - 1)) { cx = bx * blockPx + blockPx / 2; cy = by * blockPx + TILE_SIZE / 2; }
-        else if (by < maxBy - 1 && this.isBlockOwned(bx, by + 1)) { cx = bx * blockPx + blockPx / 2; cy = (by + 1) * blockPx - TILE_SIZE / 2; }
+        if (bx > 0 && this.isBlockOwned(bx - 1, by)) cx = bx * blockPx - TILE_SIZE / 2;
+        else if (bx < maxBx - 1 && this.isBlockOwned(bx + 1, by)) cx = (bx + 1) * blockPx + TILE_SIZE / 2;
+        else if (by > 0 && this.isBlockOwned(bx, by - 1)) { cx = bx * blockPx + blockPx / 2; cy = by * blockPx - TILE_SIZE / 2; }
+        else if (by < maxBy - 1 && this.isBlockOwned(bx, by + 1)) { cx = bx * blockPx + blockPx / 2; cy = (by + 1) * blockPx + TILE_SIZE / 2; }
         let li = this.lockImages.get(key);
         if (!li) { li = this.add.image(cx, cy, 'icon_lock').setDepth(25); this.lockImages.set(key, li); }
         li.setPosition(cx, cy).setVisible(true);
@@ -761,6 +858,13 @@ export class GameScene extends Phaser.Scene {
     const g = this.demolishOverlay;
     g.clear();
     const activeGather = new Set<string>();
+    // Collect tiles being actively worked by a demolish worker
+    const workedTiles = new Set<string>();
+    for (const w of this.state.workers) {
+      if (w.state === 'working' && w.currentTask?.type === 'demolish') {
+        workedTiles.add(`${w.currentTask.targetX},${w.currentTask.targetY}`);
+      }
+    }
     for (const row of this.state.tiles) {
       for (const tile of row) {
         if (!tile.markedForDemolish || tile.durability <= 0) continue;
@@ -771,6 +875,12 @@ export class GameScene extends Phaser.Scene {
         let gi = this.gatherIcons.get(gk);
         if (!gi) { gi = this.add.image(0, 0, 'icon_gather').setDepth(11); this.gatherIcons.set(gk, gi); }
         gi.setPosition(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.y * TILE_SIZE + TILE_SIZE / 2).setDisplaySize(16, 16).setVisible(true);
+        // Swing animation when a worker is actively gathering
+        if (workedTiles.has(gk)) {
+          gi.setAngle(Math.sin(this.time.now / 120) * 25);
+        } else {
+          gi.setAngle(0);
+        }
       }
     }
     for (const [k, gi] of this.gatherIcons) {
@@ -801,11 +911,11 @@ export class GameScene extends Phaser.Scene {
     else if (this.gatherMode) hint = 'Click resource to gather';
     this.modeText.setText(hint);
 
-    // Active panel content
-    if (this.activePanel === 'sell') this.drawSellPanel();
-    if (this.activePanel === 'upgrades') this.drawUpgradesPanel();
-    if (this.activePanel === 'crops') this.drawCropsPanel();
-    if (this.activePanel === 'orders') this.drawOrdersPanel();
+    // Sidebar content — always draw all
+    this.drawSellPanel();
+    this.drawUpgradesPanel();
+    this.drawCropsPanel();
+    this.drawOrdersPanel();
   }
 
   private drawSellPanel(): void {

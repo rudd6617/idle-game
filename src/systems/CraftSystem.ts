@@ -2,7 +2,7 @@ import type { GameState } from '../entities/types';
 import { WORKER_CRAFT_COST, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT } from '../entities/constants';
 
 export function getWorkerCost(state: GameState): number {
-  return WORKER_CRAFT_COST.money * Math.pow(2, state.workers.length);
+  return Math.round(WORKER_CRAFT_COST.money * Math.pow(1.2, state.workers.length));
 }
 
 export function canCraftWorker(state: GameState): boolean {

@@ -89,7 +89,7 @@ export const FACILITY_DEFS: Record<FacilityType, FacilityDef> = {
     height: 3,
     cost: 50,
     animalCost: 10,
-    maxAnimals: 5,
+    maxAnimals: 6,
     capacity: 0,
     inputPerAnimal: { wheat: 2 },
     outputPerAnimal: { egg: 1 },
