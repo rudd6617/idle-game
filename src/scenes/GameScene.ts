@@ -21,7 +21,8 @@ const MAP_PX_W = MAP_WIDTH * TILE_SIZE;
 const MAP_PX_H = MAP_HEIGHT * TILE_SIZE;
 const HUD_H = 22;
 const TOOLBAR_H = 40;
-const CANVAS_H = VIEWPORT_W + HUD_H + TOOLBAR_H;
+const TOOLBAR2_H = 32;
+const CANVAS_H = VIEWPORT_W + HUD_H + TOOLBAR_H + TOOLBAR2_H;
 const PANEL_H = 280;
 const SUB_BAR_H = 36;
 
@@ -53,6 +54,7 @@ export class GameScene extends Phaser.Scene {
   private facilityImages: Map<number, Phaser.GameObjects.Image> = new Map();
   private seederCropIcons: Map<number, Phaser.GameObjects.Image> = new Map();
   private demolishOverlay!: Phaser.GameObjects.Graphics;
+  private gatherIcons: Map<string, Phaser.GameObjects.Image> = new Map();
   private lockImages: Map<string, Phaser.GameObjects.Image> = new Map();
   private weatherOverlay!: Phaser.GameObjects.Graphics;
   private rainGraphics!: Phaser.GameObjects.Graphics;
@@ -67,7 +69,7 @@ export class GameScene extends Phaser.Scene {
   private placingFacility: FacilityType | null = null;
   private placingFarmland = false;
   private demolishMode = false;
-  private gatherMode: 'wood' | 'stone' | null = null;
+  private gatherMode = false;
   private placementPreview!: Phaser.GameObjects.Graphics;
 
   // UI
@@ -122,7 +124,7 @@ export class GameScene extends Phaser.Scene {
     this.demolishOverlay = this.add.graphics().setDepth(9);
 
     // Camera — bounds padded so map doesn't hide behind HUD/toolbar
-    this.cameras.main.setBounds(0, -HUD_H, MAP_PX_W, MAP_PX_H + HUD_H + TOOLBAR_H);
+    this.cameras.main.setBounds(0, -HUD_H, MAP_PX_W, MAP_PX_H + HUD_H + TOOLBAR_H + TOOLBAR2_H);
     this.cameras.main.scrollY = -HUD_H;
 
     this.wasdKeys = this.input.keyboard!.addKeys('W,A,S,D') as any;
@@ -150,7 +152,32 @@ export class GameScene extends Phaser.Scene {
       .setScrollFactor(0).setDepth(51).setInteractive({ useHandCursor: true });
     resetBtn.on('pointerdown', () => { this.resetting = true; localStorage.removeItem(SAVE_KEY); window.location.reload(); });
 
-    // === BOTTOM TOOLBAR ===
+    // === BOTTOM TOOLBAR (row 2 — action bar) ===
+    const tb2Y = CANVAS_H - TOOLBAR_H - TOOLBAR2_H;
+    const tb2Bg = this.add.graphics().setScrollFactor(0).setDepth(50);
+    tb2Bg.fillStyle(0x111122, 0.9);
+    tb2Bg.fillRect(0, tb2Y, VIEWPORT_W, TOOLBAR2_H);
+    tb2Bg.lineStyle(1, 0x333333, 1);
+    tb2Bg.lineBetween(0, tb2Y, VIEWPORT_W, tb2Y);
+
+    // Gather button
+    const gatherBtn = this.add.image(20, tb2Y + 16, 'tb_gather')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(22, 22)
+      .setInteractive({ useHandCursor: true });
+    gatherBtn.on('pointerdown', () => { this.clearModes(); this.gatherMode = true; });
+    this.toolbarButtons.push(gatherBtn);
+
+    // Worker button (icon + cost label)
+    const wbX = 60;
+    const workerIcon = this.add.image(wbX, tb2Y + 16, 'tb_worker')
+      .setScrollFactor(0).setDepth(51).setDisplaySize(22, 22)
+      .setInteractive({ useHandCursor: true });
+    workerIcon.on('pointerdown', () => { craftWorker(this.state); });
+    const workerLabel = this.add.text(wbX + 16, tb2Y + 4, '', { fontSize: '9px', color: '#4ade80', fontFamily: 'monospace' })
+      .setScrollFactor(0).setDepth(51);
+    (this as any)._workerLabel = workerLabel;
+
+    // === BOTTOM TOOLBAR (row 1 — main tools) ===
     const tbY = CANVAS_H - TOOLBAR_H;
     const tbBg = this.add.graphics().setScrollFactor(0).setDepth(50);
     tbBg.fillStyle(0x111122, 0.9);
@@ -159,7 +186,7 @@ export class GameScene extends Phaser.Scene {
     tbBg.lineBetween(0, tbY, VIEWPORT_W, tbY);
 
     // Mode hint text
-    this.modeText = this.add.text(VIEWPORT_W / 2, tbY - 14, '', { fontSize: '10px', color: '#facc15', fontFamily: 'monospace' })
+    this.modeText = this.add.text(VIEWPORT_W / 2, tb2Y - 14, '', { fontSize: '10px', color: '#facc15', fontFamily: 'monospace' })
       .setScrollFactor(0).setDepth(51).setOrigin(0.5, 0.5);
 
     // Tool buttons (left side) — grouped
@@ -168,8 +195,6 @@ export class GameScene extends Phaser.Scene {
       { key: 'tb_build', action: () => this.toggleGroup('buildings') },
       { key: 'tb_machine', action: () => this.toggleGroup('machines') },
       { key: 'tb_demolish', action: () => { this.clearModes(); this.demolishMode = true; } },
-      { key: 'tb_gather_wood', action: () => { this.clearModes(); this.gatherMode = 'wood'; } },
-      { key: 'tb_gather_stone', action: () => { this.clearModes(); this.gatherMode = 'stone'; } },
     ];
 
     tools.forEach((t, i) => {
@@ -223,16 +248,6 @@ export class GameScene extends Phaser.Scene {
       this.toolbarButtons.push(btn);
     });
 
-    // Worker button in toolbar (icon + cost label)
-    const wbX = 20 + tools.length * 36;
-    const workerIcon = this.add.image(wbX, tbY + 20, 'tb_worker')
-      .setScrollFactor(0).setDepth(51).setDisplaySize(24, 24)
-      .setInteractive({ useHandCursor: true });
-    workerIcon.on('pointerdown', () => { craftWorker(this.state); });
-    const workerLabel = this.add.text(wbX + 16, tbY + 6, '', { fontSize: '9px', color: '#4ade80', fontFamily: 'monospace' })
-      .setScrollFactor(0).setDepth(51);
-    (this as any)._workerLabel = workerLabel;
-
     // Panel background (hidden initially)
     this.panelBg = this.add.graphics().setScrollFactor(0).setDepth(48).setVisible(false);
 
@@ -241,7 +256,7 @@ export class GameScene extends Phaser.Scene {
 
     // Tile click
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H) return;
+      if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H) return;
       this.handleTileClick(pointer);
     });
 
@@ -316,7 +331,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const panelY = CANVAS_H - TOOLBAR_H - PANEL_H;
+    const panelY = CANVAS_H - TOOLBAR_H - TOOLBAR2_H - PANEL_H;
     this.panelBg.setVisible(true);
     this.panelBg.clear();
     this.panelBg.fillStyle(0x111122, 0.92);
@@ -384,7 +399,7 @@ export class GameScene extends Phaser.Scene {
     this.placingFacility = null;
     this.placingFarmland = false;
     this.demolishMode = false;
-    this.gatherMode = null;
+    this.gatherMode = false;
   }
 
   private clearModes(): void {
@@ -399,7 +414,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshSubBar(): void {
-    const subBarY = CANVAS_H - TOOLBAR_H - SUB_BAR_H;
+    const subBarY = CANVAS_H - TOOLBAR_H - TOOLBAR2_H - SUB_BAR_H;
     let idx = 0;
     for (const it of this.subBarItems) {
       if (it.group === this.activeGroup) {
@@ -458,8 +473,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.gatherMode) {
-      const valid = this.gatherMode === 'wood' ? ['wood', 'small_wood'] : ['stone', 'small_stone'];
-      if (valid.includes(tile.type) && tile.durability > 0) tile.markedForDemolish = !tile.markedForDemolish;
+      if (tile.durability > 0) tile.markedForDemolish = !tile.markedForDemolish;
       return;
     }
     if (this.placingFarmland) {
@@ -525,7 +539,7 @@ export class GameScene extends Phaser.Scene {
   private updatePlacementPreview(pointer: Phaser.Input.Pointer): void {
     const g = this.placementPreview;
     g.clear();
-    if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H) return;
+    if (pointer.y <= HUD_H || pointer.y >= CANVAS_H - TOOLBAR_H - TOOLBAR2_H) return;
 
     const worldX = pointer.x + this.cameras.main.scrollX;
     const worldY = pointer.y + this.cameras.main.scrollY;
@@ -746,12 +760,21 @@ export class GameScene extends Phaser.Scene {
 
     const g = this.demolishOverlay;
     g.clear();
+    const activeGather = new Set<string>();
     for (const row of this.state.tiles) {
       for (const tile of row) {
         if (!tile.markedForDemolish || tile.durability <= 0) continue;
         g.lineStyle(2, 0xff4444, 0.8);
         g.strokeRect(tile.x * TILE_SIZE + 1, tile.y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+        const gk = `${tile.x},${tile.y}`;
+        activeGather.add(gk);
+        let gi = this.gatherIcons.get(gk);
+        if (!gi) { gi = this.add.image(0, 0, 'icon_gather').setDepth(11); this.gatherIcons.set(gk, gi); }
+        gi.setPosition(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.y * TILE_SIZE + TILE_SIZE / 2).setDisplaySize(16, 16).setVisible(true);
       }
+    }
+    for (const [k, gi] of this.gatherIcons) {
+      if (!activeGather.has(k)) { gi.destroy(); this.gatherIcons.delete(k); }
     }
   }
 
@@ -775,8 +798,7 @@ export class GameScene extends Phaser.Scene {
     if (this.placingFarmland) hint = 'Place farmland (ESC cancel)';
     else if (this.placingFacility) hint = `Place ${FACILITY_DEFS[this.placingFacility].label} (ESC cancel)`;
     else if (this.demolishMode) hint = 'Click facility to demolish';
-    else if (this.gatherMode === 'wood') hint = 'Click wood to gather';
-    else if (this.gatherMode === 'stone') hint = 'Click stone to gather';
+    else if (this.gatherMode) hint = 'Click resource to gather';
     this.modeText.setText(hint);
 
     // Active panel content

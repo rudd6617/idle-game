@@ -97,6 +97,7 @@ export function generateAllSprites(scene: Phaser.Scene): void {
     add(`icon_${crop}`, emoji(12, 12, em, undefined, 10));
   }
   add('icon_fallow', emoji(12, 12, '❌', undefined, 10));
+  add('icon_gather', emoji(16, 16, '🪓', undefined, 12));
 
   // UI
   add('icon_lock', emoji(T, T, '🔒'));
@@ -106,8 +107,7 @@ export function generateAllSprites(scene: Phaser.Scene): void {
   add('tb_build', emoji(24, 24, '🏠', undefined, 18));
   add('tb_machine', emoji(24, 24, '⚙️', undefined, 18));
   add('tb_demolish', emoji(24, 24, '🔨', undefined, 18));
-  add('tb_gather_wood', emoji(24, 24, '🪓', undefined, 18));
-  add('tb_gather_stone', emoji(24, 24, '⛏️', undefined, 18));
+  add('tb_gather', emoji(24, 24, '🪓', undefined, 18));
   add('tb_worker', emoji(24, 24, '🧑‍🌾', undefined, 18));
   add('tb_sell', emoji(24, 24, '💰', undefined, 18));
   add('tb_upgrade', emoji(24, 24, '⬆️', undefined, 18));
